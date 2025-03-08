@@ -1,8 +1,25 @@
 {
   "name": "strapi-mcp",
   "version": "0.1.0",
-  "description": "An MCP server for your Strapi CMS",
-  "private": true,
+  "description": "An MCP server for your Strapi CMS that provides access to content types and entries through the MCP protocol",
+  "private": false,
+  "keywords": [
+    "strapi",
+    "cms",
+    "content-management",
+    "mcp",
+    "headless-cms"
+  ],
+  "author": "l33tdawg <l33tdawg@hackinthebox.org>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/l33tdawg/strapi-mcp.git"
+  },
+  "homepage": "https://github.com/l33tdawg/strapi-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/l33tdawg/strapi-mcp/issues"
+  },
   "type": "module",
   "bin": {
     "strapi-mcp": "./build/index.js"
@@ -24,6 +41,7 @@
   "devDependencies": {
     "@types/form-data": "^2.2.1",
     "@types/node": "^20.11.24",
+    "canvas": "^3.1.0",
     "typescript": "^5.3.3"
   }
 }
