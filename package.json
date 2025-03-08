@@ -1,0 +1,29 @@
+{
+  "name": "strapi-mcp",
+  "version": "0.1.0",
+  "description": "An MCP server for your Strapi CMS",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "strapi-mcp": "./build/index.js"
+  },
+  "files": [
+    "build"
+  ],
+  "scripts": {
+    "build": "tsc --skipLibCheck && chmod +x build/index.js",
+    "prepare": "npm run build",
+    "watch": "tsc --watch",
+    "inspector": "npx @modelcontextprotocol/inspector build/index.js",
+    "generate-test-image": "node scripts/generate-test-image.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "0.6.0",
+    "form-data": "^4.0.2"
+  },
+  "devDependencies": {
+    "@types/form-data": "^2.2.1",
+    "@types/node": "^20.11.24",
+    "typescript": "^5.3.3"
+  }
+}
