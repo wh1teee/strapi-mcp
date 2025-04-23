@@ -937,13 +937,84 @@ async function disconnectRelation(contentType: string, id: string, relationField
     throw new McpError(
       ErrorCode.InternalError,
       `Failed to disconnect relation: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-}
-
-/**
- * Handler for listing available Strapi content as resources.
- * Each content type and entry is exposed as a resource with:
+   );
+ }
+ }
+ 
+ /**
+  * Create a new content type in Strapi. Requires admin privileges.
+  */
+ async function createContentType(contentTypeData: any): Promise<any> {
+   try {
+     const { displayName, singularName, pluralName, kind = 'collectionType', attributes, options = { draftAndPublish: true }, description = "" } = contentTypeData;
+ 
+     if (!displayName || !singularName || !pluralName || !attributes) {
+       throw new Error("Missing required fields: displayName, singularName, pluralName, attributes");
+     }
+ 
+     // Construct the payload for the Content-Type Builder API
+     // Ensure API IDs are Strapi-compliant (lowercase, no spaces, etc.)
+     const singularApiId = singularName.toLowerCase().replace(/\s+/g, '-');
+     const pluralApiId = pluralName.toLowerCase().replace(/\s+/g, '-');
+     const collectionName = pluralName.toLowerCase().replace(/\s+/g, '_'); // Table name often uses underscores
+ 
+     const payload = {
+       contentType: {
+         kind: kind,
+         collectionName: collectionName,
+         info: {
+           singularName: singularApiId,
+           pluralName: pluralApiId,
+           displayName: displayName,
+           description: description
+         },
+         options: options,
+         // Ensure attributes is an object { fieldName: { type: 'string', ... }, ... }
+         attributes: typeof attributes === 'object' && !Array.isArray(attributes) ? attributes : {}
+       }
+       // Potentially add 'components' key if needed later
+     };
+ 
+     console.error(`[API] Creating new content type: ${displayName}`);
+     console.error(`[API] Payload: ${JSON.stringify(payload, null, 2)}`);
+ 
+     // Use makeAdminApiRequest to ensure admin authentication
+     const response = await makeAdminApiRequest('/content-type-builder/content-types', 'post', payload);
+ 
+     console.error(`[API] Content type creation response:`, response);
+ 
+     // Strapi might restart after schema changes, response might vary
+     // Often returns { data: { uid: 'api::...' } } or similar on success
+     return response?.data || { message: "Content type creation initiated. Strapi might be restarting." };
+ 
+   } catch (error: any) {
+     console.error(`[Error] Failed to create content type:`, error);
+ 
+     let errorMessage = `Failed to create content type`;
+     let errorCode = ExtendedErrorCode.InternalError;
+ 
+     if (axios.isAxiosError(error)) {
+       errorMessage += `: ${error.response?.status} ${error.response?.statusText}`;
+       if (error.response?.status === 400) {
+          errorCode = ExtendedErrorCode.InvalidParams;
+          errorMessage += ` (Bad Request - Check payload format/names): ${JSON.stringify(error.response?.data)}`;
+       } else if (error.response?.status === 403 || error.response?.status === 401) {
+          errorCode = ExtendedErrorCode.AccessDenied;
+          errorMessage += ` (Permission Denied - Admin credentials might lack permissions)`;
+       }
+     } else if (error instanceof Error) {
+       errorMessage += `: ${error.message}`;
+     } else {
+       errorMessage += `: ${String(error)}`;
+     }
+ 
+     throw new ExtendedMcpError(errorCode, errorMessage);
+   }
+ }
+ 
+ /**
+  * Handler for listing available Strapi content as resources.
+  * Each content type and entry is exposed as a resource with:
  * - A strapi:// URI scheme
  * - JSON MIME type
  * - Human readable name and description
@@ -1268,11 +1339,40 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             relatedIds: { type: "array", items: { type: ["string", "number"] }, description: "An array of IDs of the entries to disconnect." }
           },
           required: ["contentType", "id", "relationField", "relatedIds"]
-        }
-      },
-    ]
-  };
-});
+         }
+       },
+       {
+         name: "create_content_type",
+         description: "Create a new content type using the Content-Type Builder API (Requires Admin privileges).",
+         inputSchema: {
+           type: "object",
+           properties: {
+             displayName: { type: "string", description: "Display name for the content type (e.g., 'My Product')." },
+             singularName: { type: "string", description: "Singular name (e.g., 'Product'). Used for API ID generation." },
+             pluralName: { type: "string", description: "Plural name (e.g., 'Products'). Used for API ID and collection name generation." },
+             kind: { type: "string", enum: ["collectionType", "singleType"], default: "collectionType", description: "Kind of content type." },
+             description: { type: "string", description: "Optional description for the content type." },
+             draftAndPublish: { type: "boolean", default: true, description: "Enable draft and publish system?" },
+             attributes: {
+               type: "object",
+               description: "Object defining the fields (attributes) for the content type. Example: { \"title\": { \"type\": \"string\", \"required\": true }, \"price\": { \"type\": \"decimal\" } }",
+               additionalProperties: {
+                 type: "object",
+                 properties: {
+                   type: { type: "string", description: "Field type (e.g., string, text, richtext, email, password, number, decimal, float, date, time, datetime, boolean, json, relation, component, media, enumeration, uid)" },
+                   required: { type: "boolean" },
+                   // Add other common attribute properties as needed
+                 },
+                 required: ["type"]
+               }
+             }
+           },
+           required: ["displayName", "singularName", "pluralName", "attributes"]
+         }
+       },
+     ]
+   };
+ });
 
 /**
  * Handler for tool calls.
@@ -1480,12 +1580,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
          if (!contentType || !id || !relationField || !Array.isArray(relatedIds)) {
           throw new McpError(ErrorCode.InvalidParams, "contentType, id, relationField, and relatedIds (array) are required.");
         }
-        const result = await disconnectRelation(String(contentType), String(id), String(relationField), relatedIds);
-        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-      }
-      
-      default:
-        throw new McpError(
+         const result = await disconnectRelation(String(contentType), String(id), String(relationField), relatedIds);
+         return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+       }
+ 
+       case "create_content_type": {
+         const contentTypeData = request.params.arguments;
+         if (!contentTypeData || typeof contentTypeData !== 'object') {
+           throw new McpError(ErrorCode.InvalidParams, "Content type data object is required.");
+         }
+         // We pass the whole arguments object to the function
+         const creationResult = await createContentType(contentTypeData);
+         return {
+           content: [{
+             type: "text",
+             text: JSON.stringify(creationResult, null, 2)
+           }]
+         };
+       }
+       
+       default:
+         throw new McpError(
           ErrorCode.MethodNotFound,
           `Unknown tool: ${request.params.name}`
         );

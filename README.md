@@ -114,11 +114,12 @@ This is a TypeScript-based MCP server that integrates with Strapi CMS. It provid
 - `update_entry` - Update an existing entry
 - `delete_entry` - Delete an entry
 - `upload_media` - Upload a media file to Strapi
-- `get_content_type_schema` - Get the schema (fields, types, relations) for a specific content type.
-- `connect_relation` - Connect related entries to an entry's relation field.
-- `disconnect_relation` - Disconnect related entries from an entry's relation field.
-
-### Advanced Features
+ - `get_content_type_schema` - Get the schema (fields, types, relations) for a specific content type.
+ - `connect_relation` - Connect related entries to an entry's relation field.
+ - `disconnect_relation` - Disconnect related entries from an entry's relation field.
+ - `create_content_type` - Create a new content type using the Content-Type Builder API (Requires Admin privileges).
+ 
+ ### Advanced Features
 
 #### Filtering, Pagination, and Sorting
 The `get_entries` tool supports advanced query options:
@@ -320,9 +321,32 @@ use_mcp_tool(
     "relationField": "authors",
     "relatedIds": [3]
   }
-)
-```
-
-### Accessing Resources
-
-```
+ )
+ ```
+ 
+ ### Creating a Content Type
+ 
+ ```
+ use_mcp_tool(
+   server_name: "strapi-mcp-local",
+   tool_name: "create_content_type",
+   arguments: {
+     "displayName": "My New Product",
+     "singularName": "product",
+     "pluralName": "products",
+     "kind": "collectionType",
+     "description": "Represents products in the store",
+     "draftAndPublish": true,
+     "attributes": {
+       "name": { "type": "string", "required": true },
+       "description": { "type": "text" },
+       "price": { "type": "decimal", "required": true },
+       "stock": { "type": "integer" }
+     }
+   }
+ )
+ ```
+ 
+ ### Accessing Resources
+ 
+ ```
