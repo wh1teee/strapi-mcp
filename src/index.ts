@@ -26,6 +26,10 @@ import {
   CallToolRequest,
 } from "@modelcontextprotocol/sdk/types.js";
 import axios from "axios";
+import dotenv from 'dotenv';
+
+// Load environment variables from .env file
+dotenv.config();
 
 // Extended error codes to include additional ones we need
 enum ExtendedErrorCode {
@@ -119,17 +123,21 @@ let adminJwtToken: string | null = null;
  * Log in to the Strapi admin API using provided credentials
  */
 async function loginToStrapiAdmin(): Promise<boolean> {
-  if (!STRAPI_ADMIN_EMAIL || !STRAPI_ADMIN_PASSWORD) {
-    console.error("[Auth] No admin credentials provided, skipping admin login");
+  // Use process.env directly here to ensure latest values are used
+  const email = process.env.STRAPI_ADMIN_EMAIL;
+  const password = process.env.STRAPI_ADMIN_PASSWORD;
+
+  if (!email || !password) {
+    console.error("[Auth] No admin credentials found in process.env, skipping admin login");
     return false;
   }
 
   try {
-    console.error(`[Auth] Attempting to log in to Strapi admin as ${STRAPI_ADMIN_EMAIL}`);
+    console.error(`[Auth] Attempting to log in to Strapi admin as ${email}`);
     
-    const response = await axios.post(`${STRAPI_URL}/admin/login`, {
-      email: STRAPI_ADMIN_EMAIL,
-      password: STRAPI_ADMIN_PASSWORD
+    const response = await axios.post(`${STRAPI_URL}/admin/login`, { // STRAPI_URL constant should be fine
+      email: email,
+      password: password
     });
     
     if (response.data && response.data.data && response.data.data.token) {
@@ -942,6 +950,97 @@ async function disconnectRelation(contentType: string, id: string, relationField
  }
  
  /**
+  * Update an existing content type in Strapi. Requires admin privileges.
+  */
+ async function updateContentType(contentTypeUid: string, attributesToUpdate: Record<string, any>): Promise<any> {
+   try {
+     console.error(`[API] Updating content type: ${contentTypeUid}`);
+ 
+     if (!contentTypeUid || !attributesToUpdate || typeof attributesToUpdate !== 'object') {
+       throw new Error("Missing required fields: contentTypeUid, attributesToUpdate (object)");
+     }
+ 
+     // 1. Fetch the current schema
+     console.error(`[API] Fetching current schema for ${contentTypeUid}`);
+     // Use fetchContentTypeSchema which already tries admin endpoint first
+     const currentSchemaData = await fetchContentTypeSchema(contentTypeUid);
+ 
+     // Ensure we have the schema structure (might be nested under 'schema')
+     let currentSchema = currentSchemaData.schema || currentSchemaData;
+     if (!currentSchema || !currentSchema.attributes) {
+         // If schema is still not found or malformed after fetchContentTypeSchema tried, error out
+          console.error("[API] Could not retrieve a valid current schema structure.", currentSchemaData);
+          throw new Error(`Could not retrieve a valid schema structure for ${contentTypeUid}`);
+     }
+     console.error(`[API] Current attributes: ${Object.keys(currentSchema.attributes).join(', ')}`);
+ 
+ 
+     // 2. Merge new/updated attributes into the current schema's attributes
+     const updatedAttributes = { ...currentSchema.attributes, ...attributesToUpdate };
+     console.error(`[API] Attributes after update: ${Object.keys(updatedAttributes).join(', ')}`);
+ 
+ 
+     // 3. Construct the payload for the PUT request
+     // Strapi's PUT endpoint expects the *entire* content type definition under the 'contentType' key,
+     // and potentially component updates under 'components'. We only update contentType here.
+     const payload = {
+       contentType: {
+         ...currentSchema, // Spread the existing schema details
+         attributes: updatedAttributes // Use the merged attributes
+       }
+       // If components needed updating, add a 'components: [...]' key here
+     };
+ 
+     // Remove potentially problematic fields if they exist at the top level of currentSchema
+     // These are often managed internally by Strapi
+     delete payload.contentType.uid; // UID is usually in the URL, not body for PUT
+     // delete payload.contentType.schema; // If schema was nested, remove the outer key
+ 
+ 
+     console.error(`[API] Update Payload for PUT /content-type-builder/content-types/${contentTypeUid}: ${JSON.stringify(payload, null, 2)}`);
+ 
+     // 4. Make the PUT request using admin credentials
+     const endpoint = `/content-type-builder/content-types/${contentTypeUid}`;
+     const response = await makeAdminApiRequest(endpoint, 'put', payload);
+ 
+     console.error(`[API] Content type update response:`, response);
+ 
+     // Response might vary, often includes the updated UID or a success message
+     return response?.data || { message: `Content type ${contentTypeUid} update initiated. Strapi might be restarting.` };
+ 
+   } catch (error: any) {
+     console.error(`[Error] Failed to update content type ${contentTypeUid}:`, error);
+ 
+     let errorMessage = `Failed to update content type ${contentTypeUid}`;
+     let errorCode = ExtendedErrorCode.InternalError;
+ 
+     if (axios.isAxiosError(error)) {
+       errorMessage += `: ${error.response?.status} ${error.response?.statusText}`;
+       const responseData = JSON.stringify(error.response?.data);
+       if (error.response?.status === 400) {
+          errorCode = ExtendedErrorCode.InvalidParams;
+          errorMessage += ` (Bad Request - Check payload/attributes): ${responseData}`;
+       } else if (error.response?.status === 404) {
+          errorCode = ExtendedErrorCode.ResourceNotFound;
+          errorMessage += ` (Content Type Not Found)`;
+       } else if (error.response?.status === 403 || error.response?.status === 401) {
+          errorCode = ExtendedErrorCode.AccessDenied;
+          errorMessage += ` (Permission Denied - Admin credentials might lack permissions): ${responseData}`;
+       } else {
+          errorMessage += `: ${responseData}`;
+       }
+     } else if (error instanceof Error) {
+       errorMessage += `: ${error.message}`;
+     } else {
+       errorMessage += `: ${String(error)}`;
+     }
+ 
+     throw new ExtendedMcpError(errorCode, errorMessage);
+   }
+ }
+ 
+ 
+ /**
   * Create a new content type in Strapi. Requires admin privileges.
   */
  async function createContentType(contentTypeData: any): Promise<any> {
@@ -1370,6 +1469,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
            required: ["displayName", "singularName", "pluralName", "attributes"]
          }
        },
+       {
+         name: "update_content_type",
+         description: "Update an existing content type by adding or modifying attributes (Requires Admin privileges).",
+         inputSchema: {
+           type: "object",
+           properties: {
+             contentType: { type: "string", description: "The UID of the content type to update (e.g., 'api::speaker.speaker')." },
+             attributes: {
+               type: "object",
+               description: "Object defining the attributes to add or update. Example: { \"new_field\": { \"type\": \"boolean\", \"default\": false } }",
+               additionalProperties: {
+                 type: "object",
+                 properties: {
+                   type: { type: "string", description: "Field type (e.g., string, boolean, relation, etc.)" },
+                   // Include other relevant attribute properties like 'required', 'default', 'relation', 'target', etc.
+                 },
+                 required: ["type"]
+               }
+             }
+           },
+           required: ["contentType", "attributes"]
+         }
+       },
      ]
    };
  });
@@ -1595,12 +1717,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
            content: [{
              type: "text",
              text: JSON.stringify(creationResult, null, 2)
-           }]
-         };
-       }
-       
-       default:
-         throw new McpError(
+          }]
+        };
+      }
+
+      case "update_content_type": {
+        const { contentType, attributes } = request.params.arguments as any;
+        if (!contentType || !attributes || typeof attributes !== 'object') {
+           throw new McpError(ErrorCode.InvalidParams, "contentType (string) and attributes (object) are required.");
+         }
+         const updateResult = await updateContentType(String(contentType), attributes);
+         return {
+           content: [{
+            type: "text",
+            text: JSON.stringify(updateResult, null, 2)
+          }]
+        };
+      }
+
+      default:
+        throw new McpError(
           ErrorCode.MethodNotFound,
           `Unknown tool: ${request.params.name}`
         );

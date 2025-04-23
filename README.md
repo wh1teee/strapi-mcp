@@ -352,6 +352,27 @@ use_mcp_tool(
  )
  ```
  
+ ### Updating a Content Type
+ 
+ ```
+ use_mcp_tool(
+   server_name: "strapi-mcp-local",
+   tool_name: "update_content_type",
+   arguments: {
+     "contentType": "api::speaker.speaker",
+     "attributes": {
+       "isHighlightSpeaker": {
+         "type": "boolean",
+         "default": false
+       },
+       "newTextField": {
+         "type": "string"
+       }
+     }
+   }
+ )
+ ```
+ 
  ### Accessing Resources
  
  ```
