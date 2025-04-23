@@ -1,3 +1,61 @@
+# Strapi MCP
+
+An MCP server for Strapi CMS, providing access to content types and entries through the Model Context Protocol.
+
+## Overview
+
+This MCP server integrates with any Strapi CMS instance to provide:
+- Access to Strapi content types as resources
+- Tools to create and update content types in Strapi
+- Tools to manage content entries (create, read, update, delete)
+- Support for Strapi in development mode
+
+## Setup
+
+### Environment Variables
+
+- `STRAPI_URL`: The URL of your Strapi instance (default: http://localhost:1337)
+- `STRAPI_API_TOKEN`: An API token with appropriate permissions (required)
+- `STRAPI_DEV_MODE`: Set to "true" to enable development mode features
+
+### Installation
+
+```bash
+npm install strapi-mcp
+```
+
+### Running
+
+```bash
+export STRAPI_URL=http://localhost:1337
+export STRAPI_API_TOKEN=your-api-token
+export STRAPI_DEV_MODE=true # optional
+
+npx strapi-mcp
+```
+
+## Features
+
+- List and read content types
+- Get, create, update, and delete entries
+- Upload media files
+- Connect and disconnect relations
+- Get content type schemas
+
+## Changelog
+
+### 0.1.4
+- Improved error handling with more specific error codes
+- Added `ResourceNotFound` and `AccessDenied` error codes
+- Better error messages for common API errors
+
+### 0.1.3
+- Initial public release
+
+## License
+
+MIT
+
 # strapi-mcp MCP Server
 
 An MCP server for your Strapi CMS

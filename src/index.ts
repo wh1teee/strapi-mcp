@@ -27,6 +27,57 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import axios from "axios";
 
+// Extended error codes to include additional ones we need
+enum ExtendedErrorCode {
+  // Original error codes from SDK
+  InvalidRequest = 'InvalidRequest',
+  MethodNotFound = 'MethodNotFound',
+  InvalidParams = 'InvalidParams',
+  InternalError = 'InternalError',
+  
+  // Additional error codes
+  ResourceNotFound = 'ResourceNotFound',
+  AccessDenied = 'AccessDenied'
+}
+
+// Custom error class extending McpError to support our extended error codes
+class ExtendedMcpError extends McpError {
+  public extendedCode: ExtendedErrorCode;
+  
+  constructor(code: ExtendedErrorCode, message: string) {
+    // Map our extended codes to standard MCP error codes when needed
+    let mcpCode: ErrorCode;
+    
+    // Map custom error codes to standard MCP error codes
+    switch (code) {
+      case ExtendedErrorCode.ResourceNotFound:
+      case ExtendedErrorCode.AccessDenied:
+        // Map custom codes to InternalError for SDK compatibility
+        mcpCode = ErrorCode.InternalError;
+        break;
+      case ExtendedErrorCode.InvalidRequest:
+        mcpCode = ErrorCode.InvalidRequest;
+        break;
+      case ExtendedErrorCode.MethodNotFound:
+        mcpCode = ErrorCode.MethodNotFound;
+        break;
+      case ExtendedErrorCode.InvalidParams:
+        mcpCode = ErrorCode.InvalidParams;
+        break;
+      case ExtendedErrorCode.InternalError:
+      default:
+        mcpCode = ErrorCode.InternalError;
+        break;
+    }
+    
+    // Call super before accessing 'this'
+    super(mcpCode, message);
+    
+    // Store the extended code for reference
+    this.extendedCode = code;
+  }
+}
+
 // Configuration from environment variables
 const STRAPI_URL = process.env.STRAPI_URL || "http://localhost:1337";
 const STRAPI_API_TOKEN = process.env.STRAPI_API_TOKEN;
@@ -101,12 +152,28 @@ async function fetchContentTypes(): Promise<any[]> {
     contentTypesCache = contentTypes;
     
     return contentTypes;
-  } catch (error) {
+  } catch (error: any) {
     console.error("[Error] Failed to fetch content types:", error);
-    throw new McpError(
-      ErrorCode.InternalError,
-      `Failed to fetch content types: ${error instanceof Error ? error.message : String(error)}`
-    );
+    
+    let errorMessage = "Failed to fetch content types";
+    let errorCode = ExtendedErrorCode.InternalError;
+    
+    if (axios.isAxiosError(error)) {
+      errorMessage += `: ${error.response?.status} ${error.response?.statusText}`;
+      if (error.response?.status === 403) {
+        errorCode = ExtendedErrorCode.AccessDenied;
+        errorMessage += ` (Permission denied - check API token permissions)`;
+      } else if (error.response?.status === 401) {
+        errorCode = ExtendedErrorCode.AccessDenied;
+        errorMessage += ` (Unauthorized - API token may be invalid or expired)`;
+      }
+    } else if (error instanceof Error) {
+      errorMessage += `: ${error.message}`;
+    } else {
+      errorMessage += `: ${String(error)}`;
+    }
+    
+    throw new ExtendedMcpError(errorCode, errorMessage);
   }
 }
 
@@ -199,12 +266,31 @@ async function fetchEntry(contentType: string, id: string, queryParams?: QueryPa
     const response = await strapiClient.get(`/api/${collection}/${id}`, { params });
     
     return response.data.data;
-  } catch (error) {
+  } catch (error: any) {
     console.error(`[Error] Failed to fetch entry ${id} for ${contentType}:`, error);
-    throw new McpError(
-      ErrorCode.InternalError,
-      `Failed to fetch entry ${id} for ${contentType}: ${error instanceof Error ? error.message : String(error)}`
-    );
+    
+    let errorMessage = `Failed to fetch entry ${id} for ${contentType}`;
+    let errorCode = ExtendedErrorCode.InternalError;
+
+    if (axios.isAxiosError(error)) {
+      errorMessage += `: ${error.response?.status} ${error.response?.statusText}`;
+      if (error.response?.status === 404) {
+        errorCode = ExtendedErrorCode.ResourceNotFound;
+        errorMessage += ` (Entry not found)`;
+      } else if (error.response?.status === 403) {
+        errorCode = ExtendedErrorCode.AccessDenied;
+        errorMessage += ` (Permission denied - check API token permissions)`;
+      } else if (error.response?.status === 401) {
+        errorCode = ExtendedErrorCode.AccessDenied;
+        errorMessage += ` (Unauthorized - API token may be invalid or expired)`;
+      }
+    } else if (error instanceof Error) {
+      errorMessage += `: ${error.message}`;
+    } else {
+      errorMessage += `: ${String(error)}`;
+    }
+    
+    throw new ExtendedMcpError(errorCode, errorMessage);
   }
 }
 
@@ -328,16 +414,22 @@ async function fetchContentTypeSchema(contentType: string): Promise<any> {
     return response.data.data;
   } catch (error: any) {
     let errorMessage = `Failed to fetch schema for ${contentType}`;
-    let errorCode = ErrorCode.InternalError;
+    let errorCode = ExtendedErrorCode.InternalError;
 
     if (axios.isAxiosError(error)) {
       errorMessage += `: ${error.response?.status} ${error.response?.statusText}`;
       if (error.response?.status === 404) {
-        errorCode = ErrorCode.InvalidRequest;
-        errorMessage += ` (Content type not found or insufficient permissions)`;
+        errorCode = ExtendedErrorCode.ResourceNotFound;
+        errorMessage += ` (Content type not found)`;
       } else if (error.response?.status === 403) {
-        errorCode = ErrorCode.InvalidRequest;
+        errorCode = ExtendedErrorCode.AccessDenied;
         errorMessage += ` (Permission denied - check API token permissions for Content-Type Builder)`;
+      } else if (error.response?.status === 401) {
+        errorCode = ExtendedErrorCode.AccessDenied;
+        errorMessage += ` (Unauthorized - API token may be invalid or expired)`;
+      } else if (error.response?.status === 400) {
+        errorCode = ExtendedErrorCode.InvalidRequest;
+        errorMessage += ` (Bad request - malformed content type ID)`;
       }
     } else if (error instanceof Error) {
       errorMessage += `: ${error.message}`;
@@ -346,7 +438,7 @@ async function fetchContentTypeSchema(contentType: string): Promise<any> {
     }
 
     console.error(`[Error] ${errorMessage}`);
-    throw new McpError(errorCode, errorMessage);
+    throw new ExtendedMcpError(errorCode, errorMessage);
   }
 }
 
