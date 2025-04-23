@@ -70,9 +70,14 @@ npm install strapi-mcp
 - Connect and disconnect relations
 - Get content type schemas
 
-## Changelog
-
-### 0.1.5
+ ## Changelog
+ 
+ ### 0.1.6
+ - **Added `create_content_type` tool:** Allows creating new content types via the Content-Type Builder API (requires admin credentials).
+ - **Prioritized Admin Credentials:** Updated logic to prefer admin email/password for fetching content types and schemas, improving reliability.
+ - **Updated Documentation:** Clarified authentication methods and recommended running procedures.
+ 
+ ### 0.1.5
 - Improved content type discovery with multiple fallback methods
 - Added more robust error handling and logging
 - Enhanced schema inference for content types
