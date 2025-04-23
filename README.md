@@ -23,6 +23,9 @@ This is a TypeScript-based MCP server that integrates with Strapi CMS. It provid
 - `update_entry` - Update an existing entry
 - `delete_entry` - Delete an entry
 - `upload_media` - Upload a media file to Strapi
+- `get_content_type_schema` - Get the schema (fields, types, relations) for a specific content type.
+- `connect_relation` - Connect related entries to an entry's relation field.
+- `disconnect_relation` - Disconnect related entries from an entry's relation field.
 
 ### Advanced Features
 
@@ -187,11 +190,36 @@ use_mcp_tool(
 )
 ```
 
-### Accessing Resources
+### Connecting Relations
 
 ```
-access_mcp_resource(
+use_mcp_tool(
   server_name: "strapi-mcp",
-  uri: "strapi://content-type/api::article.article"
+  tool_name: "connect_relation",
+  arguments: {
+    "contentType": "api::article.article",
+    "id": "1",
+    "relationField": "authors",
+    "relatedIds": [2, 3]
+  }
 )
+```
+
+### Disconnecting Relations
+
+```
+use_mcp_tool(
+  server_name: "strapi-mcp",
+  tool_name: "disconnect_relation",
+  arguments: {
+    "contentType": "api::article.article",
+    "id": "1",
+    "relationField": "authors",
+    "relatedIds": [3]
+  }
+)
+```
+
+### Accessing Resources
+
 ```

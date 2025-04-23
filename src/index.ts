@@ -59,7 +59,7 @@ let contentTypesCache: any[] = [];
 const server = new Server(
   {
     name: "strapi-mcp",
-    version: "0.1.0",
+    version: "0.2.0",
   },
   {
     capabilities: {
@@ -121,6 +121,7 @@ interface QueryParams {
   };
   sort?: string[];
   populate?: string | string[] | Record<string, any>;
+  fields?: string[];
 }
 
 /**
@@ -152,6 +153,10 @@ async function fetchEntries(contentType: string, queryParams?: QueryParams): Pro
       params.populate = queryParams.populate;
     }
     
+    if (queryParams?.fields) {
+      params.fields = queryParams.fields;
+    }
+    
     // Get the entries from Strapi
     const response = await strapiClient.get(`/api/${collection}`, {
       params: params
@@ -174,15 +179,24 @@ async function fetchEntries(contentType: string, queryParams?: QueryParams): Pro
 /**
  * Fetch a specific entry by ID
  */
-async function fetchEntry(contentType: string, id: string): Promise<any> {
+async function fetchEntry(contentType: string, id: string, queryParams?: QueryParams): Promise<any> {
   try {
     console.error(`[API] Fetching entry ${id} for content type: ${contentType}`);
     
     // Extract the collection name from the content type UID
     const collection = contentType.split(".")[1];
     
+    // Build query parameters only for populate and fields
+    const params: Record<string, any> = {};
+    if (queryParams?.populate) {
+      params.populate = queryParams.populate;
+    }
+    if (queryParams?.fields) {
+      params.fields = queryParams.fields;
+    }
+
     // Get the entry from Strapi
-    const response = await strapiClient.get(`/api/${collection}/${id}`);
+    const response = await strapiClient.get(`/api/${collection}/${id}`, { params });
     
     return response.data.data;
   } catch (error) {
@@ -270,35 +284,122 @@ async function deleteEntry(contentType: string, id: string): Promise<void> {
  */
 async function uploadMedia(fileData: string, fileName: string, fileType: string): Promise<any> {
   try {
-    console.error(`[API] Uploading media file: ${fileName}`);
+    console.error(`[API] Uploading media file: ${fileName} (${fileType})`);
     
-    // Convert base64 data to buffer
-    const base64Data = fileData.replace(/^data:([A-Za-z-+/]+);base64,/, '');
-    const buffer = Buffer.from(base64Data, 'base64');
+    // Convert base64 data to a Buffer
+    const buffer = Buffer.from(fileData, 'base64');
     
-    // Create form data
-    // Note: We need to dynamically import form-data since it's a CommonJS module
-    const { default: FormData } = await import('form-data');
-    const form = new FormData();
-    form.append('files', buffer, {
+    // Use FormData for file upload
+    const formData = new FormData();
+    formData.append('files', buffer, {
       filename: fileName,
       contentType: fileType,
     });
-    
-    // Upload the file to Strapi
-    const response = await axios.post(`${STRAPI_URL}/api/upload`, form, {
+
+    const response = await strapiClient.post('/api/upload', formData, {
       headers: {
-        ...form.getHeaders(),
-        Authorization: `Bearer ${STRAPI_API_TOKEN}`,
-      },
+        ...formData.getHeaders() // Set Content-Type to multipart/form-data
+      }
     });
     
-    return response.data[0];
+    return response.data;
   } catch (error) {
-    console.error(`[Error] Failed to upload media:`, error);
+    console.error(`[Error] Failed to upload media file ${fileName}:`, error);
     throw new McpError(
       ErrorCode.InternalError,
-      `Failed to upload media: ${error instanceof Error ? error.message : String(error)}`
+      `Failed to upload media file ${fileName}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Fetch the schema for a specific content type
+ */
+async function fetchContentTypeSchema(contentType: string): Promise<any> {
+  try {
+    console.error(`[API] Fetching schema for content type: ${contentType}`);
+
+    // Use the content-type-builder API endpoint
+    // Note: This usually requires admin privileges/permissions
+    const endpoint = `/content-type-builder/content-types/${contentType}`;
+
+    const response = await strapiClient.get(endpoint);
+
+    // The schema is typically nested under response.data.data
+    return response.data.data;
+  } catch (error: any) {
+    let errorMessage = `Failed to fetch schema for ${contentType}`;
+    let errorCode = ErrorCode.InternalError;
+
+    if (axios.isAxiosError(error)) {
+      errorMessage += `: ${error.response?.status} ${error.response?.statusText}`;
+      if (error.response?.status === 404) {
+        errorCode = ErrorCode.NotFound;
+        errorMessage += ` (Content type not found or insufficient permissions)`;
+      } else if (error.response?.status === 403) {
+        errorCode = ErrorCode.PermissionDenied;
+        errorMessage += ` (Permission denied - check API token permissions for Content-Type Builder)`;
+      }
+    } else if (error instanceof Error) {
+      errorMessage += `: ${error.message}`;
+    } else {
+      errorMessage += `: ${String(error)}`;
+    }
+
+    console.error(`[Error] ${errorMessage}`);
+    throw new McpError(errorCode, errorMessage);
+  }
+}
+
+/**
+ * Connect related entries for a specific field
+ */
+async function connectRelation(contentType: string, id: string, relationField: string, relatedIds: number[] | string[]): Promise<any> {
+  try {
+    console.error(`[API] Connecting relations for ${contentType} ${id}, field ${relationField}`);
+    const updateData = {
+      data: { // Strapi v4 expects relation updates within the 'data' object for PUT
+        [relationField]: {
+          connect: relatedIds.map(rid => ({ id: Number(rid) })) // Ensure IDs are numbers
+        }
+      }
+    };
+    // Reuse updateEntry logic which correctly wraps payload in { data: ... }
+    return await updateEntry(contentType, id, updateData.data); 
+  } catch (error) {
+    // Rethrow McpError or wrap others
+    if (error instanceof McpError) throw error;
+    console.error(`[Error] Failed to connect relation ${relationField} for ${contentType} ${id}:`, error);
+    throw new McpError(
+      ErrorCode.InternalError,
+      `Failed to connect relation: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Disconnect related entries for a specific field
+ */
+async function disconnectRelation(contentType: string, id: string, relationField: string, relatedIds: number[] | string[]): Promise<any> {
+  try {
+    console.error(`[API] Disconnecting relations for ${contentType} ${id}, field ${relationField}`);
+     const updateData = {
+      data: { // Strapi v4 expects relation updates within the 'data' object for PUT
+        [relationField]: {
+          disconnect: relatedIds.map(rid => ({ id: Number(rid) })) // Ensure IDs are numbers
+        }
+      }
+    };
+    // Reuse updateEntry logic which correctly wraps payload in { data: ... }
+    return await updateEntry(contentType, id, updateData.data); 
+
+  } catch (error) {
+     // Rethrow McpError or wrap others
+     if (error instanceof McpError) throw error;
+    console.error(`[Error] Failed to disconnect relation ${relationField} for ${contentType} ${id}:`, error);
+    throw new McpError(
+      ErrorCode.InternalError,
+      `Failed to disconnect relation: ${error instanceof Error ? error.message : String(error)}`
     );
   }
 }
@@ -401,6 +502,12 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request: ReadResource
             queryParams.populate = populateParam.split(',');
           }
         }
+        
+        // Extract fields
+        const fieldsParam = parsedParams.get('fields');
+        if (fieldsParam) {
+          queryParams.fields = fieldsParam.split(',');
+        }
       } catch (parseError) {
         console.error("[Error] Failed to parse query parameters:", parseError);
         throw new McpError(
@@ -412,7 +519,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request: ReadResource
     
     // If an entry ID is provided, fetch that specific entry
     if (entryId) {
-      const entry = await fetchEntry(contentTypeUid, entryId);
+      const entry = await fetchEntry(contentTypeUid, entryId, queryParams);
       
       return {
         contents: [{
@@ -512,6 +619,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 }
               ],
               description: "Relations to populate"
+            },
+            fields: {
+              type: "array",
+              items: { type: "string" },
+              description: "Specify specific fields to return (e.g., ['title', 'slug']).",
+              required: false
             }
           },
           required: ["contentType"]
@@ -530,6 +643,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             id: {
               type: "string",
               description: "The ID of the entry"
+            },
+            populate: {
+              oneOf: [
+                { type: "string", description: "Relation to populate (e.g., 'author')" },
+                { type: "array", items: { type: "string" }, description: "Relations to populate (e.g., ['author', 'categories'])" },
+                { type: "object", description: "Complex populate configuration" }
+              ],
+              description: "Relations, components, or media fields to populate.",
+              required: false
+            },
+            fields: {
+              type: "array",
+              items: { type: "string" },
+              description: "Specify specific fields to return (e.g., ['title', 'slug']).",
+              required: false
             }
           },
           required: ["contentType", "id"]
@@ -577,44 +705,92 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "delete_entry",
-        description: "Delete an entry",
+        description: "Delete an entry for a specific content type.",
         inputSchema: {
           type: "object",
           properties: {
             contentType: {
               type: "string",
-              description: "The content type UID (e.g., 'api::article.article')"
+              description: "The API ID of the content type (e.g., 'api::article.article').",
+              required: true,
             },
             id: {
               type: "string",
-              description: "The ID of the entry to delete"
-            }
+              description: "The ID of the entry to delete.",
+              required: true,
+            },
           },
           required: ["contentType", "id"]
         }
       },
       {
         name: "upload_media",
-        description: "Upload a media file to Strapi",
+        description: "Upload a media file to the Strapi Media Library.",
         inputSchema: {
           type: "object",
           properties: {
             fileData: {
               type: "string",
-              description: "Base64-encoded file data, optionally with data URL prefix (e.g., 'data:image/jpeg;base64,...')"
+              description: "Base64 encoded string of the file data.",
+              required: true,
             },
             fileName: {
               type: "string",
-              description: "Name of the file (e.g., 'image.jpg')"
+              description: "The desired name for the file.",
+              required: true,
             },
             fileType: {
               type: "string",
-              description: "MIME type of the file (e.g., 'image/jpeg')"
-            }
+              description: "The MIME type of the file (e.g., 'image/jpeg', 'application/pdf').",
+              required: true,
+            },
           },
           required: ["fileData", "fileName", "fileType"]
         }
-      }
+      },
+      {
+        name: "get_content_type_schema",
+        description: "Get the schema (fields, types, relations) for a specific content type.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            contentType: {
+              type: "string",
+              description: "The API ID of the content type (e.g., 'api::article.article').",
+              required: true,
+            },
+          },
+          required: ["contentType"]
+        }
+      },
+      {
+        name: "connect_relation",
+        description: "Connect one or more related entries to a specific entry's relation field.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            contentType: { type: "string", description: "The API ID of the main entry's content type (e.g., 'api::article.article')." },
+            id: { type: "string", description: "The ID of the main entry to update." },
+            relationField: { type: "string", description: "The name of the relation field to modify." },
+            relatedIds: { type: "array", items: { type: ["string", "number"] }, description: "An array of IDs of the entries to connect." }
+          },
+          required: ["contentType", "id", "relationField", "relatedIds"]
+        }
+      },
+      {
+        name: "disconnect_relation",
+        description: "Disconnect one or more related entries from a specific entry's relation field.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            contentType: { type: "string", description: "The API ID of the main entry's content type (e.g., 'api::article.article')." },
+            id: { type: "string", description: "The ID of the main entry to update." },
+            relationField: { type: "string", description: "The name of the relation field to modify." },
+            relatedIds: { type: "array", items: { type: ["string", "number"] }, description: "An array of IDs of the entries to disconnect." }
+          },
+          required: ["contentType", "id", "relationField", "relatedIds"]
+        }
+      },
     ]
   };
 });
@@ -642,7 +818,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       }
       
       case "get_entries": {
-        const contentType = String(request.params.arguments?.contentType);
+        const { contentType, filters, pagination, sort, populate, fields } = request.params.arguments as any;
         if (!contentType) {
           throw new McpError(
             ErrorCode.InvalidParams,
@@ -651,26 +827,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         }
         
         // Extract query parameters from the request
-        const queryParams: QueryParams = {};
-        
-        if (request.params.arguments?.filters) {
-          queryParams.filters = request.params.arguments.filters;
-        }
-        
-        if (request.params.arguments?.pagination) {
-          queryParams.pagination = request.params.arguments.pagination;
-        }
-        
-        if (request.params.arguments?.sort) {
-          queryParams.sort = request.params.arguments.sort;
-        }
-        
-        if (request.params.arguments?.populate) {
-          queryParams.populate = request.params.arguments.populate;
-        }
+        const queryParams: QueryParams = { filters, pagination, sort, populate, fields };
         
         // Fetch entries with query parameters
-        const entries = await fetchEntries(contentType, queryParams);
+        const entries = await fetchEntries(String(contentType), queryParams);
         
         return {
           content: [{
@@ -681,8 +841,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       }
       
       case "get_entry": {
-        const contentType = String(request.params.arguments?.contentType);
-        const id = String(request.params.arguments?.id);
+        const { contentType, id, populate, fields } = request.params.arguments as any;
         
         if (!contentType || !id) {
           throw new McpError(
@@ -691,7 +850,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
           );
         }
         
-        const entry = await fetchEntry(contentType, id);
+        const queryParams: QueryParams = { populate, fields };
+        const entry = await fetchEntry(String(contentType), String(id), queryParams);
         
         return {
           content: [{
@@ -785,6 +945,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
             text: JSON.stringify(media, null, 2)
           }]
         };
+      }
+      
+      case "get_content_type_schema": {
+        const contentType = String(request.params.arguments?.contentType);
+        if (!contentType) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "Content type is required"
+          );
+        }
+        const schema = await fetchContentTypeSchema(contentType);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(schema, null, 2)
+          }]
+        };
+      }
+      
+      case "connect_relation": {
+        const { contentType, id, relationField, relatedIds } = request.params.arguments as any;
+        if (!contentType || !id || !relationField || !Array.isArray(relatedIds)) {
+          throw new McpError(ErrorCode.InvalidParams, "contentType, id, relationField, and relatedIds (array) are required.");
+        }
+        const result = await connectRelation(String(contentType), String(id), String(relationField), relatedIds);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      }
+      case "disconnect_relation": {
+         const { contentType, id, relationField, relatedIds } = request.params.arguments as any;
+         if (!contentType || !id || !relationField || !Array.isArray(relatedIds)) {
+          throw new McpError(ErrorCode.InvalidParams, "contentType, id, relationField, and relatedIds (array) are required.");
+        }
+        const result = await disconnectRelation(String(contentType), String(id), String(relationField), relatedIds);
+        return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
       }
       
       default:
