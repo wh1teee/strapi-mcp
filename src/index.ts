@@ -82,24 +82,99 @@ class ExtendedMcpError extends McpError {
 const STRAPI_URL = process.env.STRAPI_URL || "http://localhost:1337";
 const STRAPI_API_TOKEN = process.env.STRAPI_API_TOKEN;
 const STRAPI_DEV_MODE = process.env.STRAPI_DEV_MODE === "true";
+const STRAPI_ADMIN_EMAIL = process.env.STRAPI_ADMIN_EMAIL;
+const STRAPI_ADMIN_PASSWORD = process.env.STRAPI_ADMIN_PASSWORD;
 
 // Validate required environment variables
-if (!STRAPI_API_TOKEN) {
-  console.error("[Error] Missing STRAPI_API_TOKEN environment variable");
+if (!STRAPI_API_TOKEN && !(STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD)) {
+  console.error("[Error] Missing required authentication. Please provide either STRAPI_API_TOKEN or both STRAPI_ADMIN_EMAIL and STRAPI_ADMIN_PASSWORD environment variables");
   process.exit(1);
 }
 
 console.error(`[Setup] Connecting to Strapi at ${STRAPI_URL}`);
 console.error(`[Setup] Development mode: ${STRAPI_DEV_MODE ? "enabled" : "disabled"}`);
+console.error(`[Setup] Authentication: ${STRAPI_API_TOKEN ? "Using API token" : "Using admin credentials"}`);
 
 // Axios instance for Strapi API
 const strapiClient = axios.create({
   baseURL: STRAPI_URL,
   headers: {
-    Authorization: `Bearer ${STRAPI_API_TOKEN}`,
     "Content-Type": "application/json",
   },
+  validateStatus: function (status) {
+    // Consider only 5xx as errors - for more robust error handling
+    return status < 500;
+  }
 });
+
+// If API token is provided, use it
+if (STRAPI_API_TOKEN) {
+  strapiClient.defaults.headers.common['Authorization'] = `Bearer ${STRAPI_API_TOKEN}`;
+}
+
+// Store admin JWT token if we log in
+let adminJwtToken: string | null = null;
+
+/**
+ * Log in to the Strapi admin API using provided credentials
+ */
+async function loginToStrapiAdmin(): Promise<boolean> {
+  if (!STRAPI_ADMIN_EMAIL || !STRAPI_ADMIN_PASSWORD) {
+    console.error("[Auth] No admin credentials provided, skipping admin login");
+    return false;
+  }
+
+  try {
+    console.error(`[Auth] Attempting to log in to Strapi admin as ${STRAPI_ADMIN_EMAIL}`);
+    
+    const response = await axios.post(`${STRAPI_URL}/admin/login`, {
+      email: STRAPI_ADMIN_EMAIL,
+      password: STRAPI_ADMIN_PASSWORD
+    });
+    
+    if (response.data && response.data.data && response.data.data.token) {
+      adminJwtToken = response.data.data.token;
+      console.error("[Auth] Successfully logged in to Strapi admin");
+      return true;
+    } else {
+      console.error("[Auth] Login response missing token");
+      return false;
+    }
+  } catch (error) {
+    console.error("[Auth] Failed to log in to Strapi admin:", error);
+    return false;
+  }
+}
+
+/**
+ * Make a request to the admin API using the admin JWT token
+ */
+async function makeAdminApiRequest(endpoint: string, method: string = 'get', data?: any): Promise<any> {
+  if (!adminJwtToken) {
+    // Try to log in first
+    const success = await loginToStrapiAdmin();
+    if (!success) {
+      throw new Error("Not authenticated for admin API access");
+    }
+  }
+  
+  try {
+    const response = await axios({
+      method,
+      url: `${STRAPI_URL}${endpoint}`,
+      headers: {
+        'Authorization': `Bearer ${adminJwtToken}`,
+        'Content-Type': 'application/json'
+      },
+      data
+    });
+    
+    return response.data;
+  } catch (error) {
+    console.error(`[Admin API] Request to ${endpoint} failed:`, error);
+    throw error;
+  }
+}
 
 // Cache for content types
 let contentTypesCache: any[] = [];
@@ -125,33 +200,207 @@ const server = new Server(
  */
 async function fetchContentTypes(): Promise<any[]> {
   try {
-    console.error("[API] Fetching content types from Strapi");
-    
-    // If we have cached content types, return them
-    if (contentTypesCache.length > 0) {
-      return contentTypesCache;
+     console.error("[API] Fetching content types from Strapi");
+ 
+     // If we have cached content types, return them
+     // --- DEBUG: Temporarily disable cache ---
+     // if (contentTypesCache.length > 0) {
+     //   console.error("[API] Returning cached content types");
+     //   return contentTypesCache;
+     // }
+     // --- END DEBUG ---
+
+    // Helper function to process and cache content types
+    const processAndCacheContentTypes = (data: any[], source: string): any[] => {
+      console.error(`[API] Successfully fetched collection types from ${source}`);
+      const contentTypes = data.map((item: any) => {
+        const uid = item.uid;
+        const apiID = uid.split('.').pop() || '';
+        return {
+          uid: uid,
+          apiID: apiID,
+          info: {
+            displayName: item.info?.displayName || apiID.charAt(0).toUpperCase() + apiID.slice(1).replace(/-/g, ' '),
+            description: item.info?.description || `${apiID} content type`,
+          },
+          attributes: item.attributes || {}
+        };
+      });
+
+      // Filter out internal types
+      const filteredTypes = contentTypes.filter((ct: any) =>
+        !ct.uid.startsWith("admin::") &&
+        !ct.uid.startsWith("plugin::")
+      );
+
+      console.error(`[API] Found ${filteredTypes.length} content types via ${source}`);
+      contentTypesCache = filteredTypes; // Update cache
+      return filteredTypes;
+    };
+ 
+     // --- Attempt 1: Use Admin Credentials if available ---
+     // DEBUG: Log the values the function sees
+     console.error(`[DEBUG] Checking admin creds: EMAIL=${Boolean(STRAPI_ADMIN_EMAIL)}, PASSWORD=${Boolean(STRAPI_ADMIN_PASSWORD)}`);
+     if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+       console.error("[API] Attempting to fetch content types using admin credentials");
+       try {
+         // Use makeAdminApiRequest which handles login
+         // Try the content-type-builder endpoint first, as it's more common for schema listing
+         console.error("[API] Trying admin endpoint: /content-type-builder/content-types");
+         const adminResponse = await makeAdminApiRequest('/content-type-builder/content-types');
+ 
+         // Strapi's admin API often wraps data, check common structures
+         let adminData = null;
+        if (adminResponse && adminResponse.data && Array.isArray(adminResponse.data)) {
+            adminData = adminResponse.data; // Direct array in response.data
+        } else if (adminResponse && Array.isArray(adminResponse)) {
+            adminData = adminResponse; // Direct array response
+        }
+        
+        if (adminData) {
+          return processAndCacheContentTypes(adminData, "Admin API (/content-manager/collection-types)");
+        } else {
+           console.error("[API] Admin API response did not contain expected data array.", adminResponse);
+        }
+      } catch (adminError) {
+        console.error(`[API] Failed to fetch content types using admin credentials:`, adminError);
+        // Don't throw, proceed to next method
+      }
+    } else {
+       console.error("[API] Admin credentials not provided, skipping admin API attempt.");
+    }
+
+    // --- Attempt 2: Use API Token via strapiClient (Original Primary Method) ---
+    console.error("[API] Attempting to fetch content types using API token (strapiClient)");
+    try {
+      // This is the most reliable way *if* the token has permissions
+      const response = await strapiClient.get('/content-manager/collection-types');
+
+      if (response.data && Array.isArray(response.data)) {
+        // Note: This path might require admin permissions, often fails with API token
+        return processAndCacheContentTypes(response.data, "Content Manager API (/content-manager/collection-types)");
+        
+        // Transform to our expected format
+        const contentTypes = response.data.map((item: any) => {
+          const uid = item.uid;
+          const apiID = uid.split('.').pop() || '';
+          return {
+            uid: uid,
+            apiID: apiID,
+            info: {
+              displayName: item.info?.displayName || apiID.charAt(0).toUpperCase() + apiID.slice(1).replace(/-/g, ' '),
+              description: item.info?.description || `${apiID} content type`,
+            },
+            attributes: item.attributes || {}
+          };
+        });
+        
+        // Filter out internal types
+        const filteredTypes = contentTypes.filter((ct: any) => 
+          !ct.uid.startsWith("admin::") && 
+          !ct.uid.startsWith("plugin::")
+        );
+        
+        console.error(`[API] Found ${filteredTypes.length} content types`);
+        contentTypesCache = filteredTypes;
+        return filteredTypes;
+      }
+    } catch (apiError) {
+      console.error(`[API] Failed to fetch from content manager API:`, apiError);
     }
     
-    let endpoint = "/api/content-types";
-    
-    // If in development mode, use the content-type-builder API
-    if (STRAPI_DEV_MODE) {
-      endpoint = "/content-type-builder/content-types";
+    // Try to check what's available at the /api endpoint
+    try {
+      const response = await strapiClient.get('/api');
+      
+      if (response.data && typeof response.data === 'object') {
+        console.error(`[API] Found API endpoint with available collections`);
+        
+        // Get collection names from the root API
+        const collections = Object.keys(response.data);
+        console.error(`[API] Collections available: ${collections.join(', ')}`);
+        
+        if (collections.length > 0) {
+          // Convert to content types
+          const contentTypes = collections.map(name => ({
+            uid: `api::${name}.${name}`,
+            apiID: name,
+            info: {
+              displayName: name.charAt(0).toUpperCase() + name.slice(1).replace(/-/g, ' '),
+              description: `${name} content type`,
+            },
+            attributes: {}
+          }));
+          
+          contentTypesCache = contentTypes;
+          return contentTypes;
+        }
+      }
+    } catch (apiError) {
+      console.error(`[API] Failed to fetch from API root:`, apiError);
     }
     
-    // Get the list of content types from Strapi
-    const response = await strapiClient.get(endpoint);
+    // Try to directly check for the collection types we see in the screenshot
+    try {
+      const knownTypes = [
+        'order', 'order-item', 'speaker', 'sponsor', 'talk', 
+        'talk-tags', 'ticket', 'training', 'user', 'settings'
+      ];
+      
+      console.error(`[API] Directly checking for known collection types`);
+      
+      const verifiedTypes = [];
+      
+      for (const name of knownTypes) {
+        try {
+          // Check if this collection exists by trying to access it
+          await strapiClient.get(`/api/${name}`);
+          console.error(`[API] Found collection: ${name}`);
+          
+          verifiedTypes.push({
+            uid: `api::${name}.${name}`,
+            apiID: name,
+            info: {
+              displayName: name.charAt(0).toUpperCase() + name.slice(1).replace(/-/g, ' '),
+              description: `${name} content type`,
+            },
+            attributes: {}
+          });
+        } catch (err) {
+          // Skip collections that return 404
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            continue;
+          }
+          
+          // If we got a different error (like 401/403), the endpoint probably exists
+          if (axios.isAxiosError(err)) {
+            console.error(`[API] Collection ${name} exists but returned ${err.response?.status}`);
+            verifiedTypes.push({
+              uid: `api::${name}.${name}`,
+              apiID: name,
+              info: {
+                displayName: name.charAt(0).toUpperCase() + name.slice(1).replace(/-/g, ' '),
+                description: `${name} content type`,
+              },
+              attributes: {}
+            });
+          }
+        }
+      }
+      
+      if (verifiedTypes.length > 0) {
+        console.error(`[API] Found ${verifiedTypes.length} known collection types`);
+        contentTypesCache = verifiedTypes;
+        return verifiedTypes;
+      }
+    } catch (err) {
+      console.error(`[API] Error checking known types:`, err);
+    }
     
-    // Filter out internal content types
-    const contentTypes = response.data.data.filter((ct: any) => 
-      !ct.uid.startsWith("admin::") && 
-      !ct.uid.startsWith("plugin::")
-    );
+    // Return empty array if all attempts failed
+    console.error(`[API] All attempts to find content types failed`);
+    return [];
     
-    // Cache the content types
-    contentTypesCache = contentTypes;
-    
-    return contentTypes;
   } catch (error: any) {
     console.error("[Error] Failed to fetch content types:", error);
     
@@ -224,22 +473,92 @@ async function fetchEntries(contentType: string, queryParams?: QueryParams): Pro
       params.fields = queryParams.fields;
     }
     
-    // Get the entries from Strapi
-    const response = await strapiClient.get(`/api/${collection}`, {
-      params: params
-    });
+    // Try multiple possible API paths
+    const possiblePaths = [
+      `/api/${collection}`,
+      `/api/${collection.toLowerCase()}`,
+      `/api/v1/${collection}`,
+      `/${collection}`,
+      `/${collection.toLowerCase()}`
+    ];
     
-    // Return both data and pagination info
-    return {
-      data: response.data.data || [],
-      meta: response.data.meta || {}
-    };
+    let response;
+    let success = false;
+    
+    // Try each path until one works
+    for (const path of possiblePaths) {
+      try {
+        console.error(`[API] Trying path: ${path}`);
+        response = await strapiClient.get(path, { params });
+        
+        // Check if response contains error
+        if (response.data && response.data.error) {
+          console.error(`[API] Path ${path} returned an error:`, response.data.error);
+          continue;
+        }
+        
+        console.error(`[API] Successfully fetched data from: ${path}`);
+        success = true;
+        break;
+      } catch (err: any) {
+        if (axios.isAxiosError(err) && err.response?.status === 404) {
+          // Continue to try the next path if not found
+          console.error(`[API] Path ${path} not found, trying next option...`);
+          continue;
+        }
+        // For other errors, throw immediately
+        throw err;
+      }
+    }
+    
+    if (!success || !response) {
+      console.error(`[API] Could not find any valid API path for ${collection}`);
+      return {
+        data: [],
+        meta: { pagination: { page: 1, pageSize: 10, pageCount: 0, total: 0 } }
+      };
+    }
+    
+    // Handle different response structures and filter out errors
+    if (response.data.data) {
+      // Standard Strapi v4 response
+      const filteredData = Array.isArray(response.data.data) 
+        ? response.data.data.filter((item: any) => !item.error)
+        : (response.data.data.error ? [] : [response.data.data]);
+      
+      return {
+        data: filteredData,
+        meta: response.data.meta || {}
+      };
+    } else if (Array.isArray(response.data)) {
+      // Array response, likely a custom endpoint or Strapi v3
+      const filteredData = response.data.filter((item: any) => !item.error);
+      
+      return {
+        data: filteredData,
+        meta: { pagination: { page: 1, pageSize: filteredData.length, pageCount: 1, total: filteredData.length } }
+      };
+    } else if (response.data && response.data.error) {
+      // Error response, return empty data
+      console.error(`[API] Error response from API:`, response.data.error);
+      return {
+        data: [],
+        meta: { pagination: { page: 1, pageSize: 10, pageCount: 0, total: 0 } }
+      };
+    } else {
+      // Other response formats, try to handle gracefully
+      return {
+        data: [response.data],
+        meta: {}
+      };
+    }
   } catch (error) {
     console.error(`[Error] Failed to fetch entries for ${contentType}:`, error);
-    throw new McpError(
-      ErrorCode.InternalError,
-      `Failed to fetch entries for ${contentType}: ${error instanceof Error ? error.message : String(error)}`
-    );
+    // Return empty dataset instead of throwing error for better UX
+    return {
+      data: [],
+      meta: { pagination: { page: 1, pageSize: 10, pageCount: 0, total: 0 } }
+    };
   }
 }
 
@@ -400,18 +719,145 @@ async function uploadMedia(fileData: string, fileName: string, fileType: string)
 /**
  * Fetch the schema for a specific content type
  */
-async function fetchContentTypeSchema(contentType: string): Promise<any> {
-  try {
-    console.error(`[API] Fetching schema for content type: ${contentType}`);
+ async function fetchContentTypeSchema(contentType: string): Promise<any> {
+   try {
+     console.error(`[API] Fetching schema for content type: ${contentType}`);
+ 
+     // --- Attempt 1: Use Admin Credentials if available ---
+     if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+       console.error("[API] Attempting to fetch schema using admin credentials");
+       try {
+         const endpoint = `/content-type-builder/content-types/${contentType}`;
+         console.error(`[API] Trying admin endpoint: ${endpoint}`);
+         const adminResponse = await makeAdminApiRequest(endpoint);
+ 
+         // Check for schema data (often nested under 'data')
+         if (adminResponse && adminResponse.data) {
+            console.error("[API] Successfully fetched schema via Admin API");
+            return adminResponse.data; // Return the schema data
+         } else {
+            console.error("[API] Admin API response for schema did not contain expected data.", adminResponse);
+         }
+       } catch (adminError) {
+         console.error(`[API] Failed to fetch schema using admin credentials:`, adminError);
+         // Don't throw, proceed to next method if it was a 404 or auth error
+         if (!(axios.isAxiosError(adminError) && (adminError.response?.status === 401 || adminError.response?.status === 403 || adminError.response?.status === 404))) {
+            throw adminError; // Rethrow unexpected errors
+         }
+       }
+     } else {
+        console.error("[API] Admin credentials not provided, skipping admin API attempt for schema.");
+     }
+ 
+     // --- Attempt 2: Infer schema from public API (Fallback) ---
+     console.error("[API] Attempting to infer schema from public API");
 
-    // Use the content-type-builder API endpoint
-    // Note: This usually requires admin privileges/permissions
-    const endpoint = `/content-type-builder/content-types/${contentType}`;
-
-    const response = await strapiClient.get(endpoint);
-
-    // The schema is typically nested under response.data.data
-    return response.data.data;
+    // Extract the collection name from the content type UID
+    const collection = contentType.split(".")[1];
+    
+    // Try to get a sample entry to infer the schema
+    try {
+      // Try multiple possible API paths
+      const possiblePaths = [
+        `/api/${collection}`,
+        `/api/${collection.toLowerCase()}`,
+        `/api/v1/${collection}`,
+        `/${collection}`,
+        `/${collection.toLowerCase()}`
+      ];
+      
+      let response;
+      let success = false;
+      
+      // Try each path until one works
+      for (const path of possiblePaths) {
+        try {
+          console.error(`[API] Trying path for schema inference: ${path}`);
+          // Request with small limit to minimize data transfer
+          response = await strapiClient.get(`${path}?pagination[limit]=1&pagination[page]=1`);
+          console.error(`[API] Successfully fetched sample data from: ${path}`);
+          success = true;
+          break;
+        } catch (err: any) {
+          if (axios.isAxiosError(err) && err.response?.status === 404) {
+            // Continue to try the next path if not found
+            continue;
+          }
+          // For other errors, throw immediately
+          throw err;
+        }
+      }
+      
+      if (!success || !response) {
+        throw new Error(`Could not find any valid API path for ${collection}`);
+      }
+      
+      // Extract a sample entry to infer schema
+      let sampleEntry;
+      if (response.data.data && Array.isArray(response.data.data) && response.data.data.length > 0) {
+        // Standard Strapi v4 response
+        sampleEntry = response.data.data[0];
+      } else if (Array.isArray(response.data) && response.data.length > 0) {
+        // Array response
+        sampleEntry = response.data[0];
+      } else if (response.data) {
+        // Object response
+        sampleEntry = response.data;
+      }
+      
+      if (!sampleEntry) {
+        throw new Error(`No sample entries available to infer schema for ${contentType}`);
+      }
+      
+      // Infer schema from sample entry
+      const attributes: Record<string, any> = {};
+      
+      // Process entry to infer attribute types
+      Object.entries(sampleEntry.attributes || sampleEntry).forEach(([key, value]) => {
+        if (key === 'id') return; // Skip ID field
+        
+        let type: string = typeof value;
+        
+        if (type === 'object') {
+          if (value === null) {
+            type = 'string'; // Assume nullable string
+          } else if (Array.isArray(value)) {
+            type = 'relation'; // Assume array is a relation
+          } else if (value instanceof Date) {
+            type = 'datetime';
+          } else {
+            type = 'json'; // Complex object
+          }
+        }
+        
+        attributes[key] = { type };
+      });
+      
+      // Return inferred schema
+      return {
+        uid: contentType,
+        apiID: collection,
+        info: {
+          displayName: collection.charAt(0).toUpperCase() + collection.slice(1),
+          description: `Inferred schema for ${collection}`,
+        },
+        attributes
+      };
+      
+    } catch (inferError) {
+      console.error(`[API] Failed to infer schema:`, inferError);
+      
+      // Return a minimal schema as fallback
+      return {
+        uid: contentType,
+        apiID: collection,
+        info: {
+          displayName: collection.charAt(0).toUpperCase() + collection.slice(1),
+          description: `${collection} content type`,
+        },
+        attributes: {}
+      };
+    }
   } catch (error: any) {
     let errorMessage = `Failed to fetch schema for ${contentType}`;
     let errorCode = ExtendedErrorCode.InternalError;

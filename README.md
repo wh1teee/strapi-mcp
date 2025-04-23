@@ -12,27 +12,55 @@ This MCP server integrates with any Strapi CMS instance to provide:
 
 ## Setup
 
-### Environment Variables
-
-- `STRAPI_URL`: The URL of your Strapi instance (default: http://localhost:1337)
-- `STRAPI_API_TOKEN`: An API token with appropriate permissions (required)
-- `STRAPI_DEV_MODE`: Set to "true" to enable development mode features
-
-### Installation
+ ### Environment Variables
+ 
+ It's recommended to use a `.env` file in the project root to store your credentials.
+ 
+ - `STRAPI_URL`: The URL of your Strapi instance (default: `http://localhost:1337`)
+ - `STRAPI_ADMIN_EMAIL`: The email address for a Strapi admin user (Recommended for full functionality, especially schema access).
+ - `STRAPI_ADMIN_PASSWORD`: The password for the Strapi admin user (Recommended).
+ - `STRAPI_API_TOKEN`: (Optional Fallback) An API token. Can be used if admin credentials are not provided, but may have limited permissions.
+ - `STRAPI_DEV_MODE`: Set to `"true"` to enable development mode features (defaults to `false`).
+ 
+ **Example `.env` file:**
+ ```dotenv
+ STRAPI_URL=http://localhost:1337
+ STRAPI_ADMIN_EMAIL=your_admin_email@example.com
+ STRAPI_ADMIN_PASSWORD=your_admin_password
+ # STRAPI_API_TOKEN=your_api_token_here # Optional
+ ```
+ **Important:** Add `.env` to your `.gitignore` file to avoid committing credentials.
+ 
+ ### Installation
 
 ```bash
 npm install strapi-mcp
 ```
 
-### Running
-
-```bash
-export STRAPI_URL=http://localhost:1337
-export STRAPI_API_TOKEN=your-api-token
-export STRAPI_DEV_MODE=true # optional
-
-npx strapi-mcp
-```
+ ### Running
+ 
+ **Recommended Method (using `.env` file):**
+ 
+ Make sure you have built the project (`npm run build`). Then run the server using Node.js v20.6.0+ with the `--env-file` flag:
+ 
+ ```bash
+ node --env-file=.env build/index.js
+ ```
+ 
+ **Alternative (using environment variables directly):**
+ 
+ ```bash
+ export STRAPI_URL=http://localhost:1337
+ export STRAPI_ADMIN_EMAIL=your_admin_email@example.com
+ export STRAPI_ADMIN_PASSWORD=your_admin_password
+ # export STRAPI_API_TOKEN=your-api-token # Optional fallback
+ export STRAPI_DEV_MODE=true # optional
+ 
+ # Run the globally installed package (if installed via npm install -g)
+ strapi-mcp 
+ # Or run the local build directly
+ node build/index.js
+ ```
 
 ## Features
 
@@ -43,6 +71,11 @@ npx strapi-mcp
 - Get content type schemas
 
 ## Changelog
+
+### 0.1.5
+- Improved content type discovery with multiple fallback methods
+- Added more robust error handling and logging
+- Enhanced schema inference for content types
 
 ### 0.1.4
 - Improved error handling with more specific error codes
@@ -160,10 +193,22 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 ### Environment Variables
 
 - `STRAPI_URL` (optional): The URL of your Strapi instance (defaults to http://localhost:1337)
-- `STRAPI_API_TOKEN` (required): Your Strapi API token for authentication
-- `STRAPI_DEV_MODE` (optional): Set to "true" to enable development mode features (defaults to false)
-
-### Getting a Strapi API Token
+ - `STRAPI_ADMIN_EMAIL` & `STRAPI_ADMIN_PASSWORD` (Recommended): Credentials for a Strapi admin user. Required for full functionality like fetching content type schemas.
+ - `STRAPI_API_TOKEN` (Optional Fallback): Your Strapi API token. Can be used if admin credentials are not provided, but functionality might be limited based on token permissions.
+ - `STRAPI_DEV_MODE` (optional): Set to "true" to enable development mode features (defaults to false)
+ 
+ ### Authentication Priority
+ 
+ The server prioritizes authentication methods in this order:
+ 1. Admin Email & Password (`STRAPI_ADMIN_EMAIL`, `STRAPI_ADMIN_PASSWORD`)
+ 2. API Token (`STRAPI_API_TOKEN`)
+ 
+ It's strongly recommended to use Admin Credentials for the best results.
+ 
+ ### Getting Strapi Credentials
+ 
+ - **Admin Credentials:** Use the email and password of an existing Super Admin or create a dedicated admin user in your Strapi admin panel (Settings > Administration Panel > Users).
+ - **API Token:** (Optional Fallback)
 
 1. Log in to your Strapi admin panel
 2. Go to Settings > API Tokens
