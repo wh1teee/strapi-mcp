@@ -13,8 +13,8 @@
  * regardless of the content types defined in that instance.
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio";
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
   CallToolRequestSchema,
   ListResourcesRequestSchema,
@@ -24,7 +24,7 @@ import {
   McpError,
   ReadResourceRequest,
   CallToolRequest,
-} from "@modelcontextprotocol/sdk/types";
+} from "@modelcontextprotocol/sdk/types.js";
 import axios from "axios";
 
 // Configuration from environment variables
@@ -284,21 +284,20 @@ async function deleteEntry(contentType: string, id: string): Promise<void> {
  */
 async function uploadMedia(fileData: string, fileName: string, fileType: string): Promise<any> {
   try {
-    console.error(`[API] Uploading media file: ${fileName} (${fileType})`);
+    console.error(`[API] Uploading media file: ${fileName}`);
     
-    // Convert base64 data to a Buffer
     const buffer = Buffer.from(fileData, 'base64');
     
     // Use FormData for file upload
     const formData = new FormData();
-    formData.append('files', buffer, {
-      filename: fileName,
-      contentType: fileType,
-    });
+    // Convert Buffer to Blob with the correct content type
+    const blob = new Blob([buffer], { type: fileType });
+    formData.append('files', blob, fileName);
 
     const response = await strapiClient.post('/api/upload', formData, {
       headers: {
-        ...formData.getHeaders() // Set Content-Type to multipart/form-data
+        // Let axios set the correct multipart/form-data content-type with boundary
+        'Content-Type': 'multipart/form-data'
       }
     });
     
@@ -334,10 +333,10 @@ async function fetchContentTypeSchema(contentType: string): Promise<any> {
     if (axios.isAxiosError(error)) {
       errorMessage += `: ${error.response?.status} ${error.response?.statusText}`;
       if (error.response?.status === 404) {
-        errorCode = ErrorCode.NotFound;
+        errorCode = ErrorCode.InvalidRequest;
         errorMessage += ` (Content type not found or insufficient permissions)`;
       } else if (error.response?.status === 403) {
-        errorCode = ErrorCode.PermissionDenied;
+        errorCode = ErrorCode.InvalidRequest;
         errorMessage += ` (Permission denied - check API token permissions for Content-Type Builder)`;
       }
     } else if (error instanceof Error) {
@@ -575,56 +574,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "The content type UID (e.g., 'api::article.article')"
             },
-            filters: {
-              type: "object",
-              description: "Filters to apply to the query (e.g., { title: { $contains: 'hello' } })"
-            },
-            pagination: {
-              type: "object",
-              properties: {
-                page: {
-                  type: "number",
-                  description: "Page number"
-                },
-                pageSize: {
-                  type: "number",
-                  description: "Number of items per page"
-                }
-              },
-              description: "Pagination options"
-            },
-            sort: {
-              type: "array",
-              items: {
-                type: "string"
-              },
-              description: "Sorting options (e.g., ['title:asc', 'createdAt:desc'])"
-            },
-            populate: {
-              oneOf: [
-                {
-                  type: "string",
-                  description: "Relation to populate (e.g., 'author')"
-                },
-                {
-                  type: "array",
-                  items: {
-                    type: "string"
-                  },
-                  description: "Relations to populate (e.g., ['author', 'categories'])"
-                },
-                {
-                  type: "object",
-                  description: "Complex populate configuration"
-                }
-              ],
-              description: "Relations to populate"
-            },
-            fields: {
-              type: "array",
-              items: { type: "string" },
-              description: "Specify specific fields to return (e.g., ['title', 'slug']).",
-              required: false
+            options: {
+              type: "string",
+              description: "JSON string with query options including filters, pagination, sort, populate, and fields. Example: '{\"filters\":{\"title\":{\"$contains\":\"hello\"}},\"pagination\":{\"page\":1,\"pageSize\":10},\"sort\":[\"title:asc\"],\"populate\":[\"author\",\"categories\"],\"fields\":[\"title\",\"content\"]}'"
             }
           },
           required: ["contentType"]
@@ -644,20 +596,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "string",
               description: "The ID of the entry"
             },
-            populate: {
-              oneOf: [
-                { type: "string", description: "Relation to populate (e.g., 'author')" },
-                { type: "array", items: { type: "string" }, description: "Relations to populate (e.g., ['author', 'categories'])" },
-                { type: "object", description: "Complex populate configuration" }
-              ],
-              description: "Relations, components, or media fields to populate.",
-              required: false
-            },
-            fields: {
-              type: "array",
-              items: { type: "string" },
-              description: "Specify specific fields to return (e.g., ['title', 'slug']).",
-              required: false
+            options: {
+              type: "string",
+              description: "JSON string with query options including populate and fields. Example: '{\"populate\":[\"author\",\"categories\"],\"fields\":[\"title\",\"content\"]}'"
             }
           },
           required: ["contentType", "id"]
@@ -818,7 +759,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       }
       
       case "get_entries": {
-        const { contentType, filters, pagination, sort, populate, fields } = request.params.arguments as any;
+        const { contentType, options } = request.params.arguments as any;
         if (!contentType) {
           throw new McpError(
             ErrorCode.InvalidParams,
@@ -826,8 +767,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
           );
         }
         
-        // Extract query parameters from the request
-        const queryParams: QueryParams = { filters, pagination, sort, populate, fields };
+        // Parse the options string into a queryParams object
+        let queryParams: QueryParams = {};
+        if (options) {
+          try {
+            queryParams = JSON.parse(options);
+          } catch (parseError) {
+            console.error("[Error] Failed to parse query options:", parseError);
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              `Invalid query options: ${parseError instanceof Error ? parseError.message : String(parseError)}`
+            );
+          }
+        }
         
         // Fetch entries with query parameters
         const entries = await fetchEntries(String(contentType), queryParams);
@@ -841,7 +793,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
       }
       
       case "get_entry": {
-        const { contentType, id, populate, fields } = request.params.arguments as any;
+        const { contentType, id, options } = request.params.arguments as any;
         
         if (!contentType || !id) {
           throw new McpError(
@@ -850,7 +802,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
           );
         }
         
-        const queryParams: QueryParams = { populate, fields };
+        // Parse the options string into a queryParams object
+        let queryParams: QueryParams = {};
+        if (options) {
+          try {
+            queryParams = JSON.parse(options);
+          } catch (parseError) {
+            console.error("[Error] Failed to parse query options:", parseError);
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              `Invalid query options: ${parseError instanceof Error ? parseError.message : String(parseError)}`
+            );
+          }
+        }
+        
         const entry = await fetchEntry(String(contentType), String(id), queryParams);
         
         return {
