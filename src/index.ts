@@ -133,6 +133,8 @@ async function loginToStrapiAdmin(): Promise<boolean> {
   }
 
   try {
+    // DEBUG: Log credentials just before use
+    console.error(`[Auth DEBUG] Attempting login with Email: ${email}, Password: ${password ? '******' : 'MISSING'}`);
     console.error(`[Auth] Attempting to log in to Strapi admin as ${email}`);
     
     const response = await axios.post(`${STRAPI_URL}/admin/login`, { // STRAPI_URL constant should be fine
@@ -157,7 +159,7 @@ async function loginToStrapiAdmin(): Promise<boolean> {
 /**
  * Make a request to the admin API using the admin JWT token
  */
-async function makeAdminApiRequest(endpoint: string, method: string = 'get', data?: any): Promise<any> {
+async function makeAdminApiRequest(endpoint: string, method: string = 'get', data?: any, params?: Record<string, any>): Promise<any> { // Add params
   if (!adminJwtToken) {
     // Try to log in first
     const success = await loginToStrapiAdmin();
@@ -174,12 +176,38 @@ async function makeAdminApiRequest(endpoint: string, method: string = 'get', dat
         'Authorization': `Bearer ${adminJwtToken}`,
         'Content-Type': 'application/json'
       },
-      data
+      data, // Used for POST, PUT, etc.
+      params // Used for GET requests query parameters
     });
-    
+
     return response.data;
   } catch (error) {
     console.error(`[Admin API] Request to ${endpoint} failed:`, error);
+    // Check if it's an auth error (e.g., token expired)
+    if (axios.isAxiosError(error) && error.response?.status === 401 && adminJwtToken) {
+        console.error("[Admin API] Admin token might be expired. Attempting re-login...");
+        adminJwtToken = null; // Clear expired token
+        const loginSuccess = await loginToStrapiAdmin();
+        if (loginSuccess) {
+            console.error("[Admin API] Re-login successful. Retrying original request...");
+            // Retry the request once after successful re-login
+            const retryResponse = await axios({
+                method,
+                url: `${STRAPI_URL}${endpoint}`,
+                headers: {
+                    'Authorization': `Bearer ${adminJwtToken}`,
+                    'Content-Type': 'application/json'
+                },
+                data,
+                params
+            });
+            return retryResponse.data;
+        } else {
+            console.error("[Admin API] Re-login failed. Throwing original error.");
+            throw new Error("Admin re-authentication failed after token expiry.");
+        }
+    }
+    // If not a 401 or re-login failed, throw the original error
     throw error;
   }
 }
@@ -452,122 +480,145 @@ interface QueryParams {
  * Fetch entries for a specific content type with optional filtering, pagination, and sorting
  */
 async function fetchEntries(contentType: string, queryParams?: QueryParams): Promise<any> {
+  let response;
+  let success = false;
+  let fetchedData: any[] = [];
+  let fetchedMeta: any = {};
+  const collection = contentType.split(".")[1]; // Keep this for potential path variations if needed
+
+  // --- Attempt 1: Use API Token via strapiClient ---
+  console.error(`[API] Attempt 1: Fetching entries for ${contentType} using strapiClient (API Token)`);
   try {
-    console.error(`[API] Fetching entries for content type: ${contentType}`);
-    
-    // Extract the collection name from the content type UID
-    const collection = contentType.split(".")[1];
-    
-    // Build query parameters
     const params: Record<string, any> = {};
-    
-    if (queryParams?.filters) {
-      params.filters = queryParams.filters;
-    }
-    
-    if (queryParams?.pagination) {
-      params.pagination = queryParams.pagination;
-    }
-    
-    if (queryParams?.sort) {
-      params.sort = queryParams.sort;
-    }
-    
-    if (queryParams?.populate) {
-      params.populate = queryParams.populate;
-    }
-    
-    if (queryParams?.fields) {
-      params.fields = queryParams.fields;
-    }
-    
-    // Try multiple possible API paths
+    // ... build params from queryParams ... (existing code)
+    if (queryParams?.filters) params.filters = queryParams.filters;
+    if (queryParams?.pagination) params.pagination = queryParams.pagination;
+    if (queryParams?.sort) params.sort = queryParams.sort;
+    if (queryParams?.populate) params.populate = queryParams.populate;
+    if (queryParams?.fields) params.fields = queryParams.fields;
+
+    // Try multiple possible API paths (keep this flexibility)
     const possiblePaths = [
       `/api/${collection}`,
       `/api/${collection.toLowerCase()}`,
-      `/api/v1/${collection}`,
-      `/${collection}`,
-      `/${collection.toLowerCase()}`
+      // Add more variations if necessary
     ];
-    
-    let response;
-    let success = false;
-    
-    // Try each path until one works
+
     for (const path of possiblePaths) {
       try {
-        console.error(`[API] Trying path: ${path}`);
+        console.error(`[API] Trying path with strapiClient: ${path}`);
         response = await strapiClient.get(path, { params });
-        
-        // Check if response contains error
+
         if (response.data && response.data.error) {
           console.error(`[API] Path ${path} returned an error:`, response.data.error);
-          continue;
+          continue; // Try next path
         }
-        
-        console.error(`[API] Successfully fetched data from: ${path}`);
+
+        console.error(`[API] Successfully fetched data from: ${path} using strapiClient`);
         success = true;
-        break;
+
+        // Process response data
+        if (response.data.data) {
+          fetchedData = Array.isArray(response.data.data) ? response.data.data : [response.data.data];
+          fetchedMeta = response.data.meta || {};
+        } else if (Array.isArray(response.data)) {
+          fetchedData = response.data;
+          fetchedMeta = { pagination: { page: 1, pageSize: fetchedData.length, pageCount: 1, total: fetchedData.length } };
+        } else {
+           // Handle unexpected format, maybe log it
+           console.warn(`[API] Unexpected response format from ${path} using strapiClient:`, response.data);
+           fetchedData = response.data ? [response.data] : []; // Wrap if not null/undefined
+           fetchedMeta = {};
+        }
+
+        // Filter out potential errors within items if any structure allows it
+        fetchedData = fetchedData.filter((item: any) => !item?.error);
+
+        break; // Exit loop on success
       } catch (err: any) {
-        if (axios.isAxiosError(err) && err.response?.status === 404) {
-          // Continue to try the next path if not found
-          console.error(`[API] Path ${path} not found, trying next option...`);
+        if (axios.isAxiosError(err) && (err.response?.status === 404 || err.response?.status === 403 || err.response?.status === 401)) {
+          // 404: Try next path. 403/401: Permissions issue, definitely try admin fallback later.
+          console.error(`[API] Path ${path} failed with ${err.response?.status}, trying next or fallback...`);
           continue;
         }
-        // For other errors, throw immediately
+        // For other errors, rethrow to be caught by the outer try-catch
+        console.error(`[API] Unexpected error on path ${path} with strapiClient:`, err);
         throw err;
       }
     }
-    
-    if (!success || !response) {
-      console.error(`[API] Could not find any valid API path for ${collection}`);
-      return {
-        data: [],
-        meta: { pagination: { page: 1, pageSize: 10, pageCount: 0, total: 0 } }
-      };
-    }
-    
-    // Handle different response structures and filter out errors
-    if (response.data.data) {
-      // Standard Strapi v4 response
-      const filteredData = Array.isArray(response.data.data) 
-        ? response.data.data.filter((item: any) => !item.error)
-        : (response.data.data.error ? [] : [response.data.data]);
-      
-      return {
-        data: filteredData,
-        meta: response.data.meta || {}
-      };
-    } else if (Array.isArray(response.data)) {
-      // Array response, likely a custom endpoint or Strapi v3
-      const filteredData = response.data.filter((item: any) => !item.error);
-      
-      return {
-        data: filteredData,
-        meta: { pagination: { page: 1, pageSize: filteredData.length, pageCount: 1, total: filteredData.length } }
-      };
-    } else if (response.data && response.data.error) {
-      // Error response, return empty data
-      console.error(`[API] Error response from API:`, response.data.error);
-      return {
-        data: [],
-        meta: { pagination: { page: 1, pageSize: 10, pageCount: 0, total: 0 } }
-      };
+
+    // If strapiClient succeeded AND returned data, return it
+    if (success && fetchedData.length > 0) {
+      console.error(`[API] Returning data fetched via strapiClient for ${contentType}`);
+      return { data: fetchedData, meta: fetchedMeta };
+    } else if (success && fetchedData.length === 0) {
+       console.error(`[API] strapiClient succeeded for ${contentType} but returned no entries. Proceeding to admin fallback.`);
     } else {
-      // Other response formats, try to handle gracefully
-      return {
-        data: [response.data],
-        meta: {}
-      };
+       console.error(`[API] strapiClient failed to fetch entries for ${contentType}. Proceeding to admin fallback.`);
     }
+
   } catch (error) {
-    console.error(`[Error] Failed to fetch entries for ${contentType}:`, error);
-    // Return empty dataset instead of throwing error for better UX
-    return {
-      data: [],
-      meta: { pagination: { page: 1, pageSize: 10, pageCount: 0, total: 0 } }
-    };
+    // Catch errors from the strapiClient attempts (excluding 404/403/401 handled above)
+    console.error(`[API] Error during strapiClient fetch for ${contentType}:`, error);
+    // Proceed to admin fallback even if strapiClient threw an unexpected error
   }
+
+  // --- Attempt 2: Use Admin Credentials via makeAdminApiRequest ---
+  // Only attempt if admin credentials are provided
+  if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+    console.error(`[API] Attempt 2: Fetching entries for ${contentType} using makeAdminApiRequest (Admin Credentials)`);
+    try {
+      // Use the full content type UID for the content-manager endpoint
+      const adminEndpoint = `/content-manager/collection-types/${contentType}`;
+      // Prepare query params for admin request (might need adjustment based on API)
+      // Let's assume makeAdminApiRequest handles params correctly
+      const adminParams: Record<string, any> = {};
+      // Convert nested Strapi v4 params to flat query params if needed, or pass as is
+      // Example: filters[field][$eq]=value, pagination[page]=1, sort=field:asc, populate=*, fields=field1,field2
+      // For simplicity, let's pass the original structure first and modify makeAdminApiRequest
+      if (queryParams?.filters) adminParams.filters = queryParams.filters;
+      if (queryParams?.pagination) adminParams.pagination = queryParams.pagination;
+      if (queryParams?.sort) adminParams.sort = queryParams.sort;
+      if (queryParams?.populate) adminParams.populate = queryParams.populate;
+      if (queryParams?.fields) adminParams.fields = queryParams.fields;
+
+
+      // Make the request using admin credentials (modify makeAdminApiRequest to handle params)
+      const adminResponse = await makeAdminApiRequest(adminEndpoint, 'get', undefined, adminParams); // Pass params here
+
+      // Process admin response (structure might differ, e.g., response.data.results)
+      if (adminResponse && adminResponse.results && Array.isArray(adminResponse.results)) {
+         console.error(`[API] Successfully fetched data via admin credentials for ${contentType}`);
+         // Admin API often returns data in 'results' and pagination info separately
+         fetchedData = adminResponse.results;
+         fetchedMeta = adminResponse.pagination || {}; // Adjust based on actual admin API response structure
+
+         // Filter out potential errors within items
+         fetchedData = fetchedData.filter((item: any) => !item?.error);
+
+         if (fetchedData.length > 0) {
+            console.error(`[API] Returning data fetched via admin credentials for ${contentType}`);
+            return { data: fetchedData, meta: fetchedMeta };
+         } else {
+            console.error(`[API] Admin fetch succeeded for ${contentType} but returned no entries.`);
+         }
+      } else {
+         console.error(`[API] Admin fetch for ${contentType} did not return expected 'results' array. Response:`, adminResponse);
+      }
+    } catch (adminError) {
+      console.error(`[API] Failed to fetch entries using admin credentials for ${contentType}:`, adminError);
+      // Don't throw, just proceed to return empty dataset
+    }
+  } else {
+     console.error("[API] Admin credentials not provided, skipping admin fallback.");
+  }
+
+  // --- Final Fallback: Return Empty Dataset ---
+  console.error(`[API] All attempts failed or returned no data for ${contentType}. Returning empty dataset.`);
+  return {
+    data: [],
+    meta: { pagination: { page: 1, pageSize: 10, pageCount: 0, total: 0 } }
+  };
 }
 
 /**
@@ -650,24 +701,78 @@ async function createEntry(contentType: string, data: any): Promise<any> {
  * Update an existing entry
  */
 async function updateEntry(contentType: string, id: string, data: any): Promise<any> {
+  const collection = contentType.split(".")[1];
+  const apiPath = `/api/${collection}/${id}`;
+  let responseData: any = null;
+
+  // --- Attempt 1: Use API Token via strapiClient ---
+  console.error(`[API] Attempt 1: Updating entry ${id} for ${contentType} using strapiClient`);
   try {
-    console.error(`[API] Updating entry ${id} for content type: ${contentType}`);
+    const response = await strapiClient.put(apiPath, { data: data });
     
-    // Extract the collection name from the content type UID
-    const collection = contentType.split(".")[1];
-    
-    // Update the entry in Strapi
-    const response = await strapiClient.put(`/api/${collection}/${id}`, {
-      data: data
-    });
-    
-    return response.data.data;
+    // Check if data was returned
+    if (response.data && response.data.data) {
+      console.error(`[API] Successfully updated entry ${id} via strapiClient.`);
+      return response.data.data; // Success with data returned
+    } else {
+      // Update might have succeeded but didn't return data, proceed to verify/fallback
+      console.warn(`[API] Update via strapiClient for ${id} completed, but no updated data returned. Will attempt admin fallback if configured.`);
+      // Don't return yet, let it fall through to admin attempt if needed
+    }
   } catch (error) {
-    console.error(`[Error] Failed to update entry ${id} for ${contentType}:`, error);
-    throw new McpError(
-      ErrorCode.InternalError,
-      `Failed to update entry ${id} for ${contentType}: ${error instanceof Error ? error.message : String(error)}`
-    );
+    console.error(`[API] Failed to update entry ${id} via strapiClient:`, error);
+    // If it's an auth/permission error, definitely try admin fallback
+    if (axios.isAxiosError(error) && (error.response?.status === 401 || error.response?.status === 403)) {
+       console.error(`[API] Auth/Permission error (${error.response?.status}) with strapiClient, proceeding to admin fallback.`);
+    } else {
+       // For other errors (like 404 Not Found), rethrow immediately
+       console.error(`[API] Non-auth error during strapiClient update for ${id}. Rethrowing.`);
+       throw new McpError(
+         ErrorCode.InternalError,
+         `Failed to update entry ${id} for ${contentType} via strapiClient: ${error instanceof Error ? error.message : String(error)}`
+       );
+    }
+    // If it was 401/403, proceed to admin fallback
+  }
+
+  // --- Attempt 2: Use Admin Credentials via makeAdminApiRequest ---
+  if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+    console.error(`[API] Attempt 2: Updating entry ${id} for ${contentType} using makeAdminApiRequest`);
+    try {
+      // Admin API for content management often uses a different path structure
+      const adminEndpoint = `/content-manager/collection-types/${contentType}/${id}`;
+      console.error(`[API] Trying admin update endpoint: ${adminEndpoint}`);
+      
+      // Admin API PUT might just need the data directly, not nested under 'data'
+      // Let's try sending the 'data' object directly first. Adjust if needed based on Strapi version/config.
+      const adminResponse = await makeAdminApiRequest(adminEndpoint, 'put', data); // Send 'data' directly
+
+      // Check response from admin API (structure might differ)
+      if (adminResponse) {
+         console.error(`[API] Successfully updated entry ${id} via makeAdminApiRequest.`);
+         // Admin API might return the updated entry directly or nested under 'data'
+         return adminResponse.data || adminResponse; 
+      } else {
+         // Should not happen if makeAdminApiRequest resolves, but handle defensively
+         console.warn(`[API] Admin update for ${id} completed but returned no data.`);
+         // Return a success indicator even without data, as the operation likely succeeded
+         return { id: id, message: "Update via admin succeeded, no data returned." }; 
+      }
+    } catch (adminError) {
+      console.error(`[API] Failed to update entry ${id} using admin credentials:`, adminError);
+      // If admin fallback also fails, throw an error
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to update entry ${id} for ${contentType} using admin credentials: ${adminError instanceof Error ? adminError.message : String(adminError)}`
+      );
+    }
+  } else {
+     console.error("[API] Admin credentials not provided, skipping admin fallback for update.");
+     // If we reached here, strapiClient failed or returned no data, and admin creds aren't available
+     throw new ExtendedMcpError( // Use the extended error class
+       ExtendedErrorCode.AccessDenied, // Use the extended error code
+       `Failed to update entry ${id} for ${contentType}. API token may lack permissions, and admin credentials were not available for fallback.`
+     );
   }
 }
 
@@ -1620,13 +1725,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         }
         
         const entry = await updateEntry(contentType, id, data);
-        
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify(entry, null, 2)
-          }]
-        };
+
+        if (entry) {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify(entry, null, 2)
+            }]
+          };
+        } else {
+          // Handle cases where update might succeed but not return the entry
+          console.warn(`[API] Update for ${contentType} ${id} completed, but no updated entry data was returned by the API.`);
+          return {
+            content: [{
+              type: "text",
+              text: `Successfully updated entry ${id} for ${contentType}, but no updated data was returned by the API.`
+            }]
+          };
+        }
       }
       
       case "delete_entry": {
