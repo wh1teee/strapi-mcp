@@ -119,10 +119,16 @@ This is a TypeScript-based MCP server that integrates with Strapi CMS. It provid
 - `update_entry` - Update an existing entry
 - `delete_entry` - Delete an entry
 - `upload_media` - Upload a media file to Strapi
- - `get_content_type_schema` - Get the schema (fields, types, relations) for a specific content type.
- - `connect_relation` - Connect related entries to an entry's relation field.
- - `disconnect_relation` - Disconnect related entries from an entry's relation field.
- - `create_content_type` - Create a new content type using the Content-Type Builder API (Requires Admin privileges).
+- `get_content_type_schema` - Get the schema (fields, types, relations) for a specific content type.
+- `connect_relation` - Connect related entries to an entry's relation field.
+- `disconnect_relation` - Disconnect related entries from an entry's relation field.
+- `create_content_type` - Create a new content type using the Content-Type Builder API (Requires Admin privileges).
+- `publish_entry` - Publish a specific entry.
+- `unpublish_entry` - Unpublish a specific entry.
+- `list_components` - List all available components in Strapi.
+- `get_component_schema` - Get the schema for a specific component.
+- `create_component` - Create a new component.
+- `update_component` - Update an existing component.
  
  ### Advanced Features
 
@@ -150,6 +156,50 @@ Resources can be accessed with various URI formats:
 - `strapi://content-type/api::article.article` - Get all articles
 - `strapi://content-type/api::article.article/1` - Get article with ID 1
 - `strapi://content-type/api::article.article?filters={"title":{"$contains":"hello"}}` - Get filtered articles
+
+### Publishing and Unpublishing Content
+
+The `publish_entry` and `unpublish_entry` tools provide control over the content lifecycle:
+
+```json
+{
+  "contentType": "api::article.article",
+  "id": "1"
+}
+```
+
+These tools utilize the admin API paths for publishing/unpublishing actions, with a fallback to directly updating the `publishedAt` field if admin permissions are not available.
+
+### Component Management
+
+Strapi components can be managed with the following tools:
+
+- `list_components`: Get all available components
+- `get_component_schema`: View a specific component's structure
+- `create_component`: Create a new component with specified fields
+- `update_component`: Modify an existing component
+
+Example of creating a component:
+
+```json
+{
+  "componentData": {
+    "displayName": "Security Settings",
+    "category": "security",
+    "icon": "shield",
+    "attributes": {
+      "enableTwoFactor": {
+        "type": "boolean", 
+        "default": false
+      },
+      "passwordExpiration": {
+        "type": "integer",
+        "min": 0
+      }
+    }
+  }
+}
+```
 
 ## Development
 

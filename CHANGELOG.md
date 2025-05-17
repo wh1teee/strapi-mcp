@@ -2,6 +2,24 @@
 
 All notable changes to the strapi-mcp project will be documented in this file.
 
+## [0.1.7] - 2025-05-17
+
+### Added
+- New content lifecycle management tools:
+  - `publish_entry`: Publish any content entry
+  - `unpublish_entry`: Unpublish any content entry
+- Complete component management system:
+  - `list_components`: List all available components
+  - `get_component_schema`: Get schema for a specific component
+  - `create_component`: Create new components
+  - `update_component`: Update existing components
+- Improved admin authentication for all API operations
+
+### Changed
+- Prioritized admin credentials for all content operations
+- Added better error handling and fallbacks for component operations
+- Enhanced debugging with better console output
+
 ## [0.1.4] - 2025-04-23
 
 ### Added

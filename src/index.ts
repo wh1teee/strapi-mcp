@@ -486,8 +486,58 @@ async function fetchEntries(contentType: string, queryParams?: QueryParams): Pro
   let fetchedMeta: any = {};
   const collection = contentType.split(".")[1]; // Keep this for potential path variations if needed
 
-  // --- Attempt 1: Use API Token via strapiClient ---
-  console.error(`[API] Attempt 1: Fetching entries for ${contentType} using strapiClient (API Token)`);
+  // --- Attempt 1: Use Admin Credentials via makeAdminApiRequest ---
+  // Only attempt if admin credentials are provided
+  if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+    console.error(`[API] Attempt 1: Fetching entries for ${contentType} using makeAdminApiRequest (Admin Credentials)`);
+    try {
+      // Use the full content type UID for the content-manager endpoint
+      const adminEndpoint = `/content-manager/collection-types/${contentType}`;
+      // Prepare query params for admin request (might need adjustment based on API)
+      // Let's assume makeAdminApiRequest handles params correctly
+      const adminParams: Record<string, any> = {};
+      // Convert nested Strapi v4 params to flat query params if needed, or pass as is
+      // Example: filters[field][$eq]=value, pagination[page]=1, sort=field:asc, populate=*, fields=field1,field2
+      // For simplicity, let's pass the original structure first and modify makeAdminApiRequest
+      if (queryParams?.filters) adminParams.filters = queryParams.filters;
+      if (queryParams?.pagination) adminParams.pagination = queryParams.pagination;
+      if (queryParams?.sort) adminParams.sort = queryParams.sort;
+      if (queryParams?.populate) adminParams.populate = queryParams.populate;
+      if (queryParams?.fields) adminParams.fields = queryParams.fields;
+
+      // Make the request using admin credentials (modify makeAdminApiRequest to handle params)
+      const adminResponse = await makeAdminApiRequest(adminEndpoint, 'get', undefined, adminParams); // Pass params here
+
+      // Process admin response (structure might differ, e.g., response.data.results)
+      if (adminResponse && adminResponse.results && Array.isArray(adminResponse.results)) {
+         console.error(`[API] Successfully fetched data via admin credentials for ${contentType}`);
+         // Admin API often returns data in 'results' and pagination info separately
+         fetchedData = adminResponse.results;
+         fetchedMeta = adminResponse.pagination || {}; // Adjust based on actual admin API response structure
+
+         // Filter out potential errors within items
+         fetchedData = fetchedData.filter((item: any) => !item?.error);
+
+         if (fetchedData.length > 0) {
+            console.error(`[API] Returning data fetched via admin credentials for ${contentType}`);
+            return { data: fetchedData, meta: fetchedMeta };
+         } else {
+            console.error(`[API] Admin fetch succeeded for ${contentType} but returned no entries. Trying API token.`);
+         }
+      } else {
+         console.error(`[API] Admin fetch for ${contentType} did not return expected 'results' array. Response:`, adminResponse);
+         console.error(`[API] Falling back to API token.`);
+      }
+    } catch (adminError) {
+      console.error(`[API] Failed to fetch entries using admin credentials for ${contentType}:`, adminError);
+      console.error(`[API] Falling back to API token.`);
+    }
+  } else {
+     console.error("[API] Admin credentials not provided, using API token instead.");
+  }
+
+  // --- Attempt 2: Use API Token via strapiClient (as fallback) ---
+  console.error(`[API] Attempt 2: Fetching entries for ${contentType} using strapiClient (API Token)`);
   try {
     const params: Record<string, any> = {};
     // ... build params from queryParams ... (existing code)
@@ -537,8 +587,8 @@ async function fetchEntries(contentType: string, queryParams?: QueryParams): Pro
         break; // Exit loop on success
       } catch (err: any) {
         if (axios.isAxiosError(err) && (err.response?.status === 404 || err.response?.status === 403 || err.response?.status === 401)) {
-          // 404: Try next path. 403/401: Permissions issue, definitely try admin fallback later.
-          console.error(`[API] Path ${path} failed with ${err.response?.status}, trying next or fallback...`);
+          // 404: Try next path. 403/401: Permissions issue
+          console.error(`[API] Path ${path} failed with ${err.response?.status}, trying next path...`);
           continue;
         }
         // For other errors, rethrow to be caught by the outer try-catch
@@ -552,65 +602,14 @@ async function fetchEntries(contentType: string, queryParams?: QueryParams): Pro
       console.error(`[API] Returning data fetched via strapiClient for ${contentType}`);
       return { data: fetchedData, meta: fetchedMeta };
     } else if (success && fetchedData.length === 0) {
-       console.error(`[API] strapiClient succeeded for ${contentType} but returned no entries. Proceeding to admin fallback.`);
+       console.error(`[API] strapiClient succeeded for ${contentType} but returned no entries.`);
     } else {
-       console.error(`[API] strapiClient failed to fetch entries for ${contentType}. Proceeding to admin fallback.`);
+       console.error(`[API] strapiClient failed to fetch entries for ${contentType}.`);
     }
 
   } catch (error) {
     // Catch errors from the strapiClient attempts (excluding 404/403/401 handled above)
     console.error(`[API] Error during strapiClient fetch for ${contentType}:`, error);
-    // Proceed to admin fallback even if strapiClient threw an unexpected error
-  }
-
-  // --- Attempt 2: Use Admin Credentials via makeAdminApiRequest ---
-  // Only attempt if admin credentials are provided
-  if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
-    console.error(`[API] Attempt 2: Fetching entries for ${contentType} using makeAdminApiRequest (Admin Credentials)`);
-    try {
-      // Use the full content type UID for the content-manager endpoint
-      const adminEndpoint = `/content-manager/collection-types/${contentType}`;
-      // Prepare query params for admin request (might need adjustment based on API)
-      // Let's assume makeAdminApiRequest handles params correctly
-      const adminParams: Record<string, any> = {};
-      // Convert nested Strapi v4 params to flat query params if needed, or pass as is
-      // Example: filters[field][$eq]=value, pagination[page]=1, sort=field:asc, populate=*, fields=field1,field2
-      // For simplicity, let's pass the original structure first and modify makeAdminApiRequest
-      if (queryParams?.filters) adminParams.filters = queryParams.filters;
-      if (queryParams?.pagination) adminParams.pagination = queryParams.pagination;
-      if (queryParams?.sort) adminParams.sort = queryParams.sort;
-      if (queryParams?.populate) adminParams.populate = queryParams.populate;
-      if (queryParams?.fields) adminParams.fields = queryParams.fields;
-
-
-      // Make the request using admin credentials (modify makeAdminApiRequest to handle params)
-      const adminResponse = await makeAdminApiRequest(adminEndpoint, 'get', undefined, adminParams); // Pass params here
-
-      // Process admin response (structure might differ, e.g., response.data.results)
-      if (adminResponse && adminResponse.results && Array.isArray(adminResponse.results)) {
-         console.error(`[API] Successfully fetched data via admin credentials for ${contentType}`);
-         // Admin API often returns data in 'results' and pagination info separately
-         fetchedData = adminResponse.results;
-         fetchedMeta = adminResponse.pagination || {}; // Adjust based on actual admin API response structure
-
-         // Filter out potential errors within items
-         fetchedData = fetchedData.filter((item: any) => !item?.error);
-
-         if (fetchedData.length > 0) {
-            console.error(`[API] Returning data fetched via admin credentials for ${contentType}`);
-            return { data: fetchedData, meta: fetchedMeta };
-         } else {
-            console.error(`[API] Admin fetch succeeded for ${contentType} but returned no entries.`);
-         }
-      } else {
-         console.error(`[API] Admin fetch for ${contentType} did not return expected 'results' array. Response:`, adminResponse);
-      }
-    } catch (adminError) {
-      console.error(`[API] Failed to fetch entries using admin credentials for ${contentType}:`, adminError);
-      // Don't throw, just proceed to return empty dataset
-    }
-  } else {
-     console.error("[API] Admin credentials not provided, skipping admin fallback.");
   }
 
   // --- Final Fallback: Return Empty Dataset ---
@@ -631,6 +630,34 @@ async function fetchEntry(contentType: string, id: string, queryParams?: QueryPa
     // Extract the collection name from the content type UID
     const collection = contentType.split(".")[1];
     
+    // --- Attempt 1: Use Admin Credentials ---
+    if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+      console.error(`[API] Attempt 1: Fetching entry ${id} for ${contentType} using admin credentials`);
+      try {
+        // Admin API for content management uses a different path structure
+        const adminEndpoint = `/content-manager/collection-types/${contentType}/${id}`;
+        
+        // Prepare admin params
+        const adminParams: Record<string, any> = {};
+        if (queryParams?.populate) adminParams.populate = queryParams.populate;
+        if (queryParams?.fields) adminParams.fields = queryParams.fields;
+        
+        // Make the request
+        const adminResponse = await makeAdminApiRequest(adminEndpoint, 'get', undefined, adminParams);
+        
+        if (adminResponse) {
+          console.error(`[API] Successfully fetched entry ${id} via admin credentials`);
+          return adminResponse;
+        }
+      } catch (adminError) {
+        console.error(`[API] Failed to fetch entry ${id} using admin credentials:`, adminError);
+        console.error(`[API] Falling back to API token...`);
+      }
+    } else {
+      console.error(`[API] Admin credentials not provided, falling back to API token`);
+    }
+    
+    // --- Attempt 2: Use API Token as fallback ---
     // Build query parameters only for populate and fields
     const params: Record<string, any> = {};
     if (queryParams?.populate) {
@@ -640,6 +667,7 @@ async function fetchEntry(contentType: string, id: string, queryParams?: QueryPa
       params.fields = queryParams.fields;
     }
 
+    console.error(`[API] Attempt 2: Fetching entry ${id} for ${contentType} using API token`);
     // Get the entry from Strapi
     const response = await strapiClient.get(`/api/${collection}/${id}`, { params });
     
@@ -682,12 +710,62 @@ async function createEntry(contentType: string, data: any): Promise<any> {
     // Extract the collection name from the content type UID
     const collection = contentType.split(".")[1];
     
-    // Create the entry in Strapi
-    const response = await strapiClient.post(`/api/${collection}`, {
-      data: data
-    });
+    // --- Attempt 1: Use Admin Credentials via makeAdminApiRequest ---
+    if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+      console.error(`[API] Attempt 1: Creating entry for ${contentType} using makeAdminApiRequest`);
+      try {
+        // Admin API for content management often uses a different path structure
+        const adminEndpoint = `/content-manager/collection-types/${contentType}`;
+        console.error(`[API] Trying admin create endpoint: ${adminEndpoint}`);
+        
+        // Admin API might need the data directly, not nested under 'data'
+        const adminResponse = await makeAdminApiRequest(adminEndpoint, 'post', data);
+
+        // Check response from admin API (structure might differ)
+        if (adminResponse) {
+          console.error(`[API] Successfully created entry via makeAdminApiRequest.`);
+          // Admin API might return the created entry directly or nested under 'data'
+          return adminResponse.data || adminResponse;
+        } else {
+          // Should not happen if makeAdminApiRequest resolves, but handle defensively
+          console.warn(`[API] Admin create completed but returned no data.`);
+          // Return a success indicator even without data, as the operation likely succeeded
+          return { message: "Create via admin succeeded, no data returned." };
+        }
+      } catch (adminError) {
+        console.error(`[API] Failed to create entry using admin credentials:`, adminError);
+        // Only try API token if admin credentials fail
+        console.error(`[API] Admin credentials failed, attempting to use API token as fallback.`);
+      }
+    } else {
+      console.error("[API] Admin credentials not provided, falling back to API token.");
+    }
     
-    return response.data.data;
+    // --- Attempt 2: Use API Token via strapiClient (as fallback) ---
+    console.error(`[API] Attempt 2: Creating entry for ${contentType} using strapiClient`);
+    try {
+      // Create the entry in Strapi
+      const response = await strapiClient.post(`/api/${collection}`, {
+        data: data
+      });
+      
+      if (response.data && response.data.data) {
+        console.error(`[API] Successfully created entry via strapiClient.`);
+        return response.data.data;
+      } else {
+        console.warn(`[API] Create via strapiClient completed, but no data returned.`);
+        throw new McpError(
+          ErrorCode.InternalError,
+          `Failed to create entry for ${contentType}: No data returned from API`
+        );
+      }
+    } catch (error) {
+      console.error(`[API] Failed to create entry via strapiClient:`, error);
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to create entry for ${contentType} via strapiClient: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   } catch (error) {
     console.error(`[Error] Failed to create entry for ${contentType}:`, error);
     throw new McpError(
@@ -705,8 +783,38 @@ async function updateEntry(contentType: string, id: string, data: any): Promise<
   const apiPath = `/api/${collection}/${id}`;
   let responseData: any = null;
 
-  // --- Attempt 1: Use API Token via strapiClient ---
-  console.error(`[API] Attempt 1: Updating entry ${id} for ${contentType} using strapiClient`);
+  // --- Attempt 1: Use Admin Credentials via makeAdminApiRequest ---
+  if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+    console.error(`[API] Attempt 1: Updating entry ${id} for ${contentType} using makeAdminApiRequest`);
+    try {
+      // Admin API for content management often uses a different path structure
+      const adminEndpoint = `/content-manager/collection-types/${contentType}/${id}`;
+      console.error(`[API] Trying admin update endpoint: ${adminEndpoint}`);
+      
+      // Admin API PUT might just need the data directly, not nested under 'data'
+      const adminResponse = await makeAdminApiRequest(adminEndpoint, 'put', data); // Send 'data' directly
+
+      // Check response from admin API (structure might differ)
+      if (adminResponse) {
+        console.error(`[API] Successfully updated entry ${id} via makeAdminApiRequest.`);
+        // Admin API might return the updated entry directly or nested under 'data'
+        return adminResponse.data || adminResponse; 
+      } else {
+        // Should not happen if makeAdminApiRequest resolves, but handle defensively
+        console.warn(`[API] Admin update for ${id} completed but returned no data.`);
+        // Return a success indicator even without data, as the operation likely succeeded
+        return { id: id, message: "Update via admin succeeded, no data returned." }; 
+      }
+    } catch (adminError) {
+      console.error(`[API] Failed to update entry ${id} using admin credentials:`, adminError);
+      console.error(`[API] Admin credentials failed, attempting to use API token as fallback.`);
+    }
+  } else {
+    console.error("[API] Admin credentials not provided, falling back to API token.");
+  }
+
+  // --- Attempt 2: Use API Token via strapiClient (as fallback) ---
+  console.error(`[API] Attempt 2: Updating entry ${id} for ${contentType} using strapiClient`);
   try {
     const response = await strapiClient.put(apiPath, { data: data });
     
@@ -715,64 +823,17 @@ async function updateEntry(contentType: string, id: string, data: any): Promise<
       console.error(`[API] Successfully updated entry ${id} via strapiClient.`);
       return response.data.data; // Success with data returned
     } else {
-      // Update might have succeeded but didn't return data, proceed to verify/fallback
-      console.warn(`[API] Update via strapiClient for ${id} completed, but no updated data returned. Will attempt admin fallback if configured.`);
-      // Don't return yet, let it fall through to admin attempt if needed
+      // Update might have succeeded but didn't return data
+      console.warn(`[API] Update via strapiClient for ${id} completed, but no updated data returned.`);
+      // Return a success indicator even without data, as the operation likely succeeded
+      return { id: id, message: "Update via API token succeeded, no data returned." };
     }
   } catch (error) {
     console.error(`[API] Failed to update entry ${id} via strapiClient:`, error);
-    // If it's an auth/permission error, definitely try admin fallback
-    if (axios.isAxiosError(error) && (error.response?.status === 401 || error.response?.status === 403)) {
-       console.error(`[API] Auth/Permission error (${error.response?.status}) with strapiClient, proceeding to admin fallback.`);
-    } else {
-       // For other errors (like 404 Not Found), rethrow immediately
-       console.error(`[API] Non-auth error during strapiClient update for ${id}. Rethrowing.`);
-       throw new McpError(
-         ErrorCode.InternalError,
-         `Failed to update entry ${id} for ${contentType} via strapiClient: ${error instanceof Error ? error.message : String(error)}`
-       );
-    }
-    // If it was 401/403, proceed to admin fallback
-  }
-
-  // --- Attempt 2: Use Admin Credentials via makeAdminApiRequest ---
-  if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
-    console.error(`[API] Attempt 2: Updating entry ${id} for ${contentType} using makeAdminApiRequest`);
-    try {
-      // Admin API for content management often uses a different path structure
-      const adminEndpoint = `/content-manager/collection-types/${contentType}/${id}`;
-      console.error(`[API] Trying admin update endpoint: ${adminEndpoint}`);
-      
-      // Admin API PUT might just need the data directly, not nested under 'data'
-      // Let's try sending the 'data' object directly first. Adjust if needed based on Strapi version/config.
-      const adminResponse = await makeAdminApiRequest(adminEndpoint, 'put', data); // Send 'data' directly
-
-      // Check response from admin API (structure might differ)
-      if (adminResponse) {
-         console.error(`[API] Successfully updated entry ${id} via makeAdminApiRequest.`);
-         // Admin API might return the updated entry directly or nested under 'data'
-         return adminResponse.data || adminResponse; 
-      } else {
-         // Should not happen if makeAdminApiRequest resolves, but handle defensively
-         console.warn(`[API] Admin update for ${id} completed but returned no data.`);
-         // Return a success indicator even without data, as the operation likely succeeded
-         return { id: id, message: "Update via admin succeeded, no data returned." }; 
-      }
-    } catch (adminError) {
-      console.error(`[API] Failed to update entry ${id} using admin credentials:`, adminError);
-      // If admin fallback also fails, throw an error
-      throw new McpError(
-        ErrorCode.InternalError,
-        `Failed to update entry ${id} for ${contentType} using admin credentials: ${adminError instanceof Error ? adminError.message : String(adminError)}`
-      );
-    }
-  } else {
-     console.error("[API] Admin credentials not provided, skipping admin fallback for update.");
-     // If we reached here, strapiClient failed or returned no data, and admin creds aren't available
-     throw new ExtendedMcpError( // Use the extended error class
-       ExtendedErrorCode.AccessDenied, // Use the extended error code
-       `Failed to update entry ${id} for ${contentType}. API token may lack permissions, and admin credentials were not available for fallback.`
-     );
+    throw new McpError(
+      ErrorCode.InternalError,
+      `Failed to update entry ${id} for ${contentType} via strapiClient: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 
@@ -1217,8 +1278,309 @@ async function disconnectRelation(contentType: string, id: string, relationField
  }
  
  /**
-  * Handler for listing available Strapi content as resources.
-  * Each content type and entry is exposed as a resource with:
+  * Publish an entry
+  */
+ async function publishEntry(contentType: string, id: string): Promise<any> {
+   try {
+     console.error(`[API] Publishing entry ${id} for content type: ${contentType}`);
+     
+     // --- Attempt 1: Use Admin Credentials ---
+     if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+       console.error(`[API] Attempt 1: Publishing entry ${id} for ${contentType} using admin credentials`);
+       try {
+         // The admin API endpoint for publishing
+         const adminEndpoint = `/content-manager/collection-types/${contentType}/${id}/actions/publish`;
+         
+         // Make the POST request to publish
+         const adminResponse = await makeAdminApiRequest(adminEndpoint, 'post');
+         
+         if (adminResponse) {
+           console.error(`[API] Successfully published entry ${id} via admin credentials`);
+           return adminResponse;
+         }
+       } catch (adminError) {
+         console.error(`[API] Failed to publish entry ${id} using admin credentials:`, adminError);
+         console.error(`[API] Falling back to API token...`);
+       }
+     } else {
+       console.error(`[API] Admin credentials not provided, falling back to API token`);
+     }
+     
+     // --- Attempt 2: Use API Token (fallback) - update the publishedAt field directly ---
+     const collection = contentType.split(".")[1];
+     console.error(`[API] Attempt 2: Publishing entry ${id} for ${contentType} using API token`);
+     
+     // For API token, we'll update the publishedAt field to the current time
+     const now = new Date().toISOString();
+     const response = await strapiClient.put(`/api/${collection}/${id}`, {
+       data: {
+         publishedAt: now
+       }
+     });
+     
+     return response.data.data;
+   } catch (error) {
+     console.error(`[Error] Failed to publish entry ${id} for ${contentType}:`, error);
+     throw new McpError(
+       ErrorCode.InternalError,
+       `Failed to publish entry ${id} for ${contentType}: ${error instanceof Error ? error.message : String(error)}`
+     );
+   }
+ }
+
+ /**
+  * Unpublish an entry
+  */
+ async function unpublishEntry(contentType: string, id: string): Promise<any> {
+   try {
+     console.error(`[API] Unpublishing entry ${id} for content type: ${contentType}`);
+     
+     // --- Attempt 1: Use Admin Credentials ---
+     if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+       console.error(`[API] Attempt 1: Unpublishing entry ${id} for ${contentType} using admin credentials`);
+       try {
+         // The admin API endpoint for unpublishing
+         const adminEndpoint = `/content-manager/collection-types/${contentType}/${id}/actions/unpublish`;
+         
+         // Make the POST request to unpublish
+         const adminResponse = await makeAdminApiRequest(adminEndpoint, 'post');
+         
+         if (adminResponse) {
+           console.error(`[API] Successfully unpublished entry ${id} via admin credentials`);
+           return adminResponse;
+         }
+       } catch (adminError) {
+         console.error(`[API] Failed to unpublish entry ${id} using admin credentials:`, adminError);
+         console.error(`[API] Falling back to API token...`);
+       }
+     } else {
+       console.error(`[API] Admin credentials not provided, falling back to API token`);
+     }
+     
+     // --- Attempt 2: Use API Token (fallback) - set publishedAt to null ---
+     const collection = contentType.split(".")[1];
+     console.error(`[API] Attempt 2: Unpublishing entry ${id} for ${contentType} using API token`);
+     
+     // For API token, we'll set the publishedAt field to null
+     const response = await strapiClient.put(`/api/${collection}/${id}`, {
+       data: {
+         publishedAt: null
+       }
+     });
+     
+     return response.data.data;
+   } catch (error) {
+     console.error(`[Error] Failed to unpublish entry ${id} for ${contentType}:`, error);
+     throw new McpError(
+       ErrorCode.InternalError,
+       `Failed to unpublish entry ${id} for ${contentType}: ${error instanceof Error ? error.message : String(error)}`
+     );
+   }
+ }
+
+ /**
+  * List all components
+  */
+ async function listComponents(): Promise<any[]> {
+   try {
+     console.error(`[API] Listing all components`);
+     
+     // Admin credentials are required for component operations
+     if (!STRAPI_ADMIN_EMAIL || !STRAPI_ADMIN_PASSWORD) {
+       throw new ExtendedMcpError(
+         ExtendedErrorCode.AccessDenied,
+         "Admin credentials are required for component operations"
+       );
+     }
+     
+     // The admin API endpoint for components
+     const adminEndpoint = `/content-type-builder/components`;
+     
+     // Make the GET request to fetch components
+     const componentsResponse = await makeAdminApiRequest(adminEndpoint);
+     
+     if (!componentsResponse || !componentsResponse.data) {
+       console.error(`[API] No components found or unexpected response format`);
+       return [];
+     }
+     
+     // Process the components data
+     const components = Array.isArray(componentsResponse.data) 
+       ? componentsResponse.data 
+       : [componentsResponse.data];
+     
+     // Return formatted component info
+     return components.map((component: any) => ({
+       uid: component.uid,
+       category: component.category,
+       displayName: component.info?.displayName || component.uid.split('.').pop(),
+       description: component.info?.description || `${component.uid} component`,
+       icon: component.info?.icon
+     }));
+   } catch (error) {
+     console.error(`[Error] Failed to list components:`, error);
+     throw new McpError(
+       ErrorCode.InternalError,
+       `Failed to list components: ${error instanceof Error ? error.message : String(error)}`
+     );
+   }
+ }
+
+ /**
+  * Get component schema
+  */
+ async function getComponentSchema(componentUid: string): Promise<any> {
+   try {
+     console.error(`[API] Fetching schema for component: ${componentUid}`);
+     
+     // Admin credentials are required for component operations
+     if (!STRAPI_ADMIN_EMAIL || !STRAPI_ADMIN_PASSWORD) {
+       throw new ExtendedMcpError(
+         ExtendedErrorCode.AccessDenied,
+         "Admin credentials are required for component operations"
+       );
+     }
+     
+     // The admin API endpoint for a specific component
+     const adminEndpoint = `/content-type-builder/components/${componentUid}`;
+     
+     // Make the GET request to fetch the component schema
+     const componentResponse = await makeAdminApiRequest(adminEndpoint);
+     
+     if (!componentResponse || !componentResponse.data) {
+       throw new ExtendedMcpError(
+         ExtendedErrorCode.ResourceNotFound,
+         `Component ${componentUid} not found or access denied`
+       );
+     }
+     
+     return componentResponse.data;
+   } catch (error) {
+     console.error(`[Error] Failed to fetch component schema for ${componentUid}:`, error);
+     throw new McpError(
+       ErrorCode.InternalError,
+       `Failed to fetch component schema for ${componentUid}: ${error instanceof Error ? error.message : String(error)}`
+     );
+   }
+ }
+
+ /**
+  * Create a new component
+  */
+ async function createComponent(componentData: any): Promise<any> {
+   try {
+     console.error(`[API] Creating new component`);
+     
+     // Admin credentials are required for component operations
+     if (!STRAPI_ADMIN_EMAIL || !STRAPI_ADMIN_PASSWORD) {
+       throw new ExtendedMcpError(
+         ExtendedErrorCode.AccessDenied,
+         "Admin credentials are required for component operations"
+       );
+     }
+     
+     const { displayName, category, icon, attributes } = componentData;
+     
+     if (!displayName || !category || !attributes) {
+       throw new Error("Missing required fields: displayName, category, attributes");
+     }
+     
+     // Convert displayName to API-friendly string (lowercase, hyphens)
+     const apiName = displayName.toLowerCase().replace(/\s+/g, '-');
+     
+     // Construct the payload for the API
+     const payload = {
+       component: {
+         category: category,
+         icon: icon || 'brush',
+         displayName: displayName,
+         attributes: attributes
+       }
+     };
+     
+     console.error(`[API] Component creation payload:`, payload);
+     
+     // The admin API endpoint for creating components
+     const adminEndpoint = `/content-type-builder/components`;
+     
+     // Make the POST request to create the component
+     const response = await makeAdminApiRequest(adminEndpoint, 'post', payload);
+     
+     console.error(`[API] Component creation response:`, response);
+     
+     // Strapi might restart after schema changes
+     return response?.data || { message: "Component creation initiated. Strapi might be restarting." };
+   } catch (error) {
+     console.error(`[Error] Failed to create component:`, error);
+     throw new McpError(
+       ErrorCode.InternalError,
+       `Failed to create component: ${error instanceof Error ? error.message : String(error)}`
+     );
+   }
+ }
+
+ /**
+  * Update an existing component
+  */
+ async function updateComponent(componentUid: string, attributesToUpdate: Record<string, any>): Promise<any> {
+   try {
+     console.error(`[API] Updating component: ${componentUid}`);
+     
+     // Admin credentials are required for component operations
+     if (!STRAPI_ADMIN_EMAIL || !STRAPI_ADMIN_PASSWORD) {
+       throw new ExtendedMcpError(
+         ExtendedErrorCode.AccessDenied,
+         "Admin credentials are required for component operations"
+       );
+     }
+     
+     // 1. Fetch the current component schema
+     console.error(`[API] Fetching current schema for ${componentUid}`);
+     const currentSchemaData = await getComponentSchema(componentUid);
+     
+     // Ensure we have the schema structure
+     let currentSchema = currentSchemaData.schema || currentSchemaData;
+     if (!currentSchema || !currentSchema.attributes) {
+       console.error("[API] Could not retrieve a valid current schema structure.", currentSchemaData);
+       throw new Error(`Could not retrieve a valid schema structure for ${componentUid}`);
+     }
+     
+     // 2. Merge new/updated attributes into the current schema's attributes
+     const updatedAttributes = { ...currentSchema.attributes, ...attributesToUpdate };
+     
+     // 3. Construct the payload for the PUT request
+     const payload = {
+       component: {
+         ...currentSchema,
+         attributes: updatedAttributes
+       }
+     };
+     
+     // Remove potentially problematic fields
+     delete payload.component.uid;
+     
+     console.error(`[API] Component update payload:`, payload);
+     
+     // 4. Make the PUT request to update the component
+     const adminEndpoint = `/content-type-builder/components/${componentUid}`;
+     const response = await makeAdminApiRequest(adminEndpoint, 'put', payload);
+     
+     console.error(`[API] Component update response:`, response);
+     
+     // Response might vary, but should typically include the updated component data
+     return response?.data || { message: `Component ${componentUid} update initiated. Strapi might be restarting.` };
+   } catch (error) {
+     console.error(`[Error] Failed to update component ${componentUid}:`, error);
+     throw new McpError(
+       ErrorCode.InternalError,
+       `Failed to update component ${componentUid}: ${error instanceof Error ? error.message : String(error)}`
+     );
+   }
+ }
+
+/**
+ * Handler for listing available Strapi content as resources.
+ * Each content type and entry is exposed as a resource with:
  * - A strapi:// URI scheme
  * - JSON MIME type
  * - Human readable name and description
@@ -1459,19 +1821,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "delete_entry",
-        description: "Delete an entry for a specific content type.",
+        description: "Deletes a specific entry.",
         inputSchema: {
           type: "object",
           properties: {
             contentType: {
               type: "string",
-              description: "The API ID of the content type (e.g., 'api::article.article').",
-              required: true,
+              description: "Content type UID.",
             },
             id: {
               type: "string",
-              description: "The ID of the entry to delete.",
-              required: true,
+              description: "Entry ID.",
             },
           },
           required: ["contentType", "id"]
@@ -1486,17 +1846,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             fileData: {
               type: "string",
               description: "Base64 encoded string of the file data.",
-              required: true,
             },
             fileName: {
               type: "string",
               description: "The desired name for the file.",
-              required: true,
             },
             fileType: {
               type: "string",
               description: "The MIME type of the file (e.g., 'image/jpeg', 'application/pdf').",
-              required: true,
             },
           },
           required: ["fileData", "fileName", "fileType"]
@@ -1511,7 +1868,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             contentType: {
               type: "string",
               description: "The API ID of the content type (e.g., 'api::article.article').",
-              required: true,
             },
           },
           required: ["contentType"]
@@ -1519,52 +1875,52 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "connect_relation",
-        description: "Connect one or more related entries to a specific entry's relation field.",
+        description: "Connects related entries to a relation field.",
         inputSchema: {
           type: "object",
           properties: {
-            contentType: { type: "string", description: "The API ID of the main entry's content type (e.g., 'api::article.article')." },
-            id: { type: "string", description: "The ID of the main entry to update." },
-            relationField: { type: "string", description: "The name of the relation field to modify." },
-            relatedIds: { type: "array", items: { type: ["string", "number"] }, description: "An array of IDs of the entries to connect." }
+            contentType: { type: "string", description: "Main content type UID." },
+            id: { type: "string", description: "Main entry ID." },
+            relationField: { type: "string", description: "Relation field name." },
+            relatedIds: { type: "array", items: { type: "string" }, description: "Array of entry IDs to connect." }
           },
           required: ["contentType", "id", "relationField", "relatedIds"]
         }
       },
       {
         name: "disconnect_relation",
-        description: "Disconnect one or more related entries from a specific entry's relation field.",
+        description: "Disconnects related entries from a relation field.",
         inputSchema: {
           type: "object",
           properties: {
-            contentType: { type: "string", description: "The API ID of the main entry's content type (e.g., 'api::article.article')." },
-            id: { type: "string", description: "The ID of the main entry to update." },
-            relationField: { type: "string", description: "The name of the relation field to modify." },
-            relatedIds: { type: "array", items: { type: ["string", "number"] }, description: "An array of IDs of the entries to disconnect." }
+            contentType: { type: "string", description: "Main content type UID." },
+            id: { type: "string", description: "Main entry ID." },
+            relationField: { type: "string", description: "Relation field name." },
+            relatedIds: { type: "array", items: { type: "string" }, description: "Array of entry IDs to disconnect." }
           },
           required: ["contentType", "id", "relationField", "relatedIds"]
          }
        },
        {
          name: "create_content_type",
-         description: "Create a new content type using the Content-Type Builder API (Requires Admin privileges).",
+         description: "Creates a new content type (Admin privileges required).",
          inputSchema: {
            type: "object",
            properties: {
-             displayName: { type: "string", description: "Display name for the content type (e.g., 'My Product')." },
-             singularName: { type: "string", description: "Singular name (e.g., 'Product'). Used for API ID generation." },
-             pluralName: { type: "string", description: "Plural name (e.g., 'Products'). Used for API ID and collection name generation." },
+             displayName: { type: "string", description: "Display name for content type." },
+             singularName: { type: "string", description: "Singular name for API ID." },
+             pluralName: { type: "string", description: "Plural name for API ID." },
              kind: { type: "string", enum: ["collectionType", "singleType"], default: "collectionType", description: "Kind of content type." },
-             description: { type: "string", description: "Optional description for the content type." },
-             draftAndPublish: { type: "boolean", default: true, description: "Enable draft and publish system?" },
+             description: { type: "string", description: "Optional description." },
+             draftAndPublish: { type: "boolean", default: true, description: "Enable draft/publish?" },
              attributes: {
                type: "object",
-               description: "Object defining the fields (attributes) for the content type. Example: { \"title\": { \"type\": \"string\", \"required\": true }, \"price\": { \"type\": \"decimal\" } }",
+               description: "Fields for the content type. E.g., { \"title\": { \"type\": \"string\" } }",
                additionalProperties: {
                  type: "object",
                  properties: {
-                   type: { type: "string", description: "Field type (e.g., string, text, richtext, email, password, number, decimal, float, date, time, datetime, boolean, json, relation, component, media, enumeration, uid)" },
-                   required: { type: "boolean" },
+                   type: { type: "string", description: "Field type (string, text, number, etc.)" },
+                   required: { type: "boolean", description: "Is this field required?" },
                    // Add other common attribute properties as needed
                  },
                  required: ["type"]
@@ -1576,18 +1932,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
        },
        {
          name: "update_content_type",
-         description: "Update an existing content type by adding or modifying attributes (Requires Admin privileges).",
+         description: "Updates a content type attributes (Admin privileges required).",
          inputSchema: {
            type: "object",
            properties: {
-             contentType: { type: "string", description: "The UID of the content type to update (e.g., 'api::speaker.speaker')." },
+             contentType: { type: "string", description: "UID of content type to update." },
              attributes: {
                type: "object",
-               description: "Object defining the attributes to add or update. Example: { \"new_field\": { \"type\": \"boolean\", \"default\": false } }",
+               description: "Attributes to add/update. E.g., { \"new_field\": { \"type\": \"boolean\" } }",
                additionalProperties: {
                  type: "object",
                  properties: {
-                   type: { type: "string", description: "Field type (e.g., string, boolean, relation, etc.)" },
+                   type: { type: "string", description: "Field type (string, boolean, etc.)" },
                    // Include other relevant attribute properties like 'required', 'default', 'relation', 'target', etc.
                  },
                  required: ["type"]
@@ -1595,6 +1951,96 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
              }
            },
            required: ["contentType", "attributes"]
+         }
+       },
+       {
+         name: "list_components",
+         description: "List all available components in Strapi",
+         inputSchema: {
+           type: "object",
+           properties: {}
+         }
+       },
+       {
+         name: "get_component_schema",
+         description: "Get the schema for a specific component",
+         inputSchema: {
+           type: "object",
+           properties: {
+             componentUid: {
+               type: "string",
+               description: "The API ID of the component"
+             }
+           },
+           required: ["componentUid"]
+         }
+       },
+       {
+         name: "create_component",
+         description: "Create a new component",
+         inputSchema: {
+           type: "object",
+           properties: {
+             componentData: {
+               type: "object",
+               description: "The data for the new component"
+             }
+           },
+           required: ["componentData"]
+         }
+       },
+       {
+         name: "update_component",
+         description: "Update an existing component",
+         inputSchema: {
+           type: "object",
+           properties: {
+             componentUid: {
+               type: "string",
+               description: "The API ID of the component to update"
+             },
+             attributesToUpdate: {
+               type: "object",
+               description: "The attributes to update for the component"
+             }
+           },
+           required: ["componentUid", "attributesToUpdate"]
+         }
+       },
+       {
+         name: "publish_entry",
+         description: "Publishes a specific entry.",
+         inputSchema: {
+           type: "object",
+           properties: {
+             contentType: {
+               type: "string",
+               description: "Content type UID."
+             },
+             id: {
+               type: "string",
+               description: "Entry ID."
+             }
+           },
+           required: ["contentType", "id"]
+         }
+       },
+       {
+         name: "unpublish_entry",
+         description: "Unpublishes a specific entry.",
+         inputSchema: {
+           type: "object",
+           properties: {
+             contentType: {
+               type: "string",
+               description: "Content type UID."
+             },
+             id: {
+               type: "string",
+               description: "Entry ID."
+             }
+           },
+           required: ["contentType", "id"]
          }
        },
      ]
@@ -1847,6 +2293,101 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
            content: [{
             type: "text",
             text: JSON.stringify(updateResult, null, 2)
+          }]
+        };
+      }
+
+      case "list_components": {
+        const components = await listComponents();
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(components, null, 2)
+          }]
+        };
+      }
+
+      case "get_component_schema": {
+        const componentUid = String(request.params.arguments?.componentUid);
+        if (!componentUid) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "Component UID is required"
+          );
+        }
+        const schema = await getComponentSchema(componentUid);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(schema, null, 2)
+          }]
+        };
+      }
+
+      case "create_component": {
+        const componentData = request.params.arguments;
+        if (!componentData || typeof componentData !== 'object') {
+          throw new McpError(ErrorCode.InvalidParams, "Component data object is required.");
+        }
+        const creationResult = await createComponent(componentData);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(creationResult, null, 2)
+          }]
+        };
+      }
+
+      case "update_component": {
+        const { componentUid, attributesToUpdate } = request.params.arguments as any;
+        if (!componentUid || !attributesToUpdate || typeof attributesToUpdate !== 'object') {
+          throw new McpError(ErrorCode.InvalidParams, "componentUid (string) and attributesToUpdate (object) are required.");
+        }
+        const updateResult = await updateComponent(String(componentUid), attributesToUpdate);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(updateResult, null, 2)
+          }]
+        };
+      }
+
+      case "publish_entry": {
+        const contentType = String(request.params.arguments?.contentType);
+        const id = String(request.params.arguments?.id);
+        
+        if (!contentType || !id) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "Content type and ID are required"
+          );
+        }
+        
+        const result = await publishEntry(contentType, id);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }]
+        };
+      }
+      
+      case "unpublish_entry": {
+        const contentType = String(request.params.arguments?.contentType);
+        const id = String(request.params.arguments?.id);
+        
+        if (!contentType || !id) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "Content type and ID are required"
+          );
+        }
+        
+        const result = await unpublishEntry(contentType, id);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(result, null, 2)
           }]
         };
       }
