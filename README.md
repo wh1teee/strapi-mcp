@@ -39,28 +39,46 @@ npm install strapi-mcp
 
  ### Running
  
- **Recommended Method (using `.env` file):**
+**Recommended Method (using Cursor MCP Configuration):**
+
+For Cursor users, configure the strapi-mcp server in your `~/.cursor/mcp.json` file:
+
+```json
+"strapi-mcp": {
+  "command": "node",
+  "args": ["/path/to/strapi-mcp/build/index.js"], 
+  "env": {
+    "STRAPI_URL": "http://localhost:1337",
+    "STRAPI_ADMIN_EMAIL": "your_admin_email@example.com",
+    "STRAPI_ADMIN_PASSWORD": "your_admin_password"
+  }
+}
+```
+
+Cursor will manage the server lifecycle automatically when strapi-mcp tools are used.
+
+**Alternative Method (using `.env` file):**
  
- Make sure you have built the project (`npm run build`). Then run the server using Node.js v20.6.0+ with the `--env-file` flag:
+Make sure you have built the project (`npm run build`). Then run the server using Node.js v20.6.0+ with the `--env-file` flag:
  
- ```bash
- node --env-file=.env build/index.js
- ```
+```bash
+node --env-file=.env build/index.js
+```
  
- **Alternative (using environment variables directly):**
+**Alternative (using environment variables directly):**
  
- ```bash
- export STRAPI_URL=http://localhost:1337
- export STRAPI_ADMIN_EMAIL=your_admin_email@example.com
- export STRAPI_ADMIN_PASSWORD=your_admin_password
- # export STRAPI_API_TOKEN=your-api-token # Optional fallback
- export STRAPI_DEV_MODE=true # optional
+```bash
+export STRAPI_URL=http://localhost:1337
+export STRAPI_ADMIN_EMAIL=your_admin_email@example.com
+export STRAPI_ADMIN_PASSWORD=your_admin_password
+# export STRAPI_API_TOKEN=your-api-token # Optional fallback
+export STRAPI_DEV_MODE=true # optional
  
- # Run the globally installed package (if installed via npm install -g)
- strapi-mcp 
- # Or run the local build directly
- node build/index.js
- ```
+# Run the globally installed package (if installed via npm install -g)
+strapi-mcp 
+# Or run the local build directly
+node build/index.js
+```
 
 ## Features
 
