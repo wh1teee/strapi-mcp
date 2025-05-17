@@ -14,11 +14,21 @@ All notable changes to the strapi-mcp project will be documented in this file.
   - `create_component`: Create new components
   - `update_component`: Update existing components
 - Improved admin authentication for all API operations
+- New content type management functionality:
+  - `delete_content_type`: Delete existing content types via the Content-Type Builder API
 
 ### Changed
 - Prioritized admin credentials for all content operations
 - Added better error handling and fallbacks for component operations
 - Enhanced debugging with better console output
+- Enhanced the `loginToStrapiAdmin` and `makeAdminApiRequest` functions with better error logging and token handling
+- Improved payload structure for the Strapi v4 API in content type creation
+- Updated documentation to clarify server management via Cursor configuration
+
+### Fixed
+- Fixed authentication issues in the `createContentType` function 
+- Improved error handling in content type management
+- Resolved server process management issues with multiple instances
 
 ## [0.1.4] - 2025-04-23
 
