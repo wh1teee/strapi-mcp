@@ -2050,6 +2050,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
          }
        },
        {
+         name: "delete_content_type",
+         description: "Deletes a content type (Admin privileges required).",
+         inputSchema: {
+           type: "object",
+           properties: {
+             contentType: { type: "string", description: "UID of content type to delete (e.g., 'api::test.test')." }
+           },
+           required: ["contentType"]
+         }
+       },
+       {
          name: "list_components",
          description: "List all available components in Strapi",
          inputSchema: {
@@ -2393,6 +2404,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         };
       }
 
+      case "delete_content_type": {
+        const contentTypeUid = String(request.params.arguments?.contentType);
+        if (!contentTypeUid) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "Content type UID is required"
+          );
+        }
+        const deletionResult = await deleteContentType(contentTypeUid);
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(deletionResult, null, 2)
+          }]
+        };
+      }
+
       case "list_components": {
         const components = await listComponents();
         return {
@@ -2525,3 +2553,52 @@ main().catch((error) => {
   console.error("[Error] Server error:", error);
   process.exit(1);
 });
+
+/**
+ * Delete a content type from Strapi. Requires admin privileges.
+ */
+async function deleteContentType(contentTypeUid: string): Promise<any> {
+  try {
+    console.error(`[API] Deleting content type: ${contentTypeUid}`);
+    
+    // Validate that this is a proper content type UID
+    if (!contentTypeUid || !contentTypeUid.includes('.')) {
+      throw new Error(`Invalid content type UID: ${contentTypeUid}. UID should be in the format 'api::name.name'`);
+    }
+    
+    // Make the DELETE request using admin credentials
+    const endpoint = `/content-type-builder/content-types/${contentTypeUid}`;
+    console.error(`[API] Sending DELETE request to: ${endpoint}`);
+    
+    const response = await makeAdminApiRequest(endpoint, 'delete');
+    console.error(`[API] Content type deletion response:`, response);
+    
+    // Return the response data or a success message
+    return response?.data || { message: `Content type ${contentTypeUid} deleted. Strapi might be restarting.` };
+  } catch (error: any) {
+    console.error(`[Error] Failed to delete content type ${contentTypeUid}:`, error);
+    
+    let errorMessage = `Failed to delete content type ${contentTypeUid}`;
+    let errorCode = ExtendedErrorCode.InternalError;
+    
+    if (axios.isAxiosError(error)) {
+      errorMessage += `: ${error.response?.status} ${error.response?.statusText}`;
+      if (error.response?.status === 404) {
+        errorCode = ExtendedErrorCode.ResourceNotFound;
+        errorMessage += ` (Content type not found)`;
+      } else if (error.response?.status === 400) {
+        errorCode = ExtendedErrorCode.InvalidParams;
+        errorMessage += ` (Bad Request): ${JSON.stringify(error.response?.data)}`;
+      } else if (error.response?.status === 403 || error.response?.status === 401) {
+        errorCode = ExtendedErrorCode.AccessDenied;
+        errorMessage += ` (Permission Denied - Admin credentials might lack permissions)`;
+      }
+    } else if (error instanceof Error) {
+      errorMessage += `: ${error.message}`;
+    } else {
+      errorMessage += `: ${String(error)}`;
+    }
+    
+    throw new ExtendedMcpError(errorCode, errorMessage);
+  }
+}
