@@ -1,5 +1,14 @@
 #!/usr/bin/env node
 
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[FATAL] Uncaught Exception:', error);
+  process.exit(1); // Mandatory exit after uncaught exception
+});
+
 /**
  * Strapi MCP Server
  * 
@@ -133,25 +142,41 @@ async function loginToStrapiAdmin(): Promise<boolean> {
   }
 
   try {
-    // DEBUG: Log credentials just before use
-    console.error(`[Auth DEBUG] Attempting login with Email: ${email}, Password: ${password ? '******' : 'MISSING'}`);
-    console.error(`[Auth] Attempting to log in to Strapi admin as ${email}`);
+    // Log the authentication attempt with more detail
+    console.error(`[Auth] Attempting login to Strapi admin at ${STRAPI_URL}/admin/login as ${email}`);
+    console.error(`[Auth] Full URL being used: ${STRAPI_URL}/admin/login`);
     
-    const response = await axios.post(`${STRAPI_URL}/admin/login`, { // STRAPI_URL constant should be fine
-      email: email,
-      password: password
+    // Make the request with more detailed logging
+    console.error(`[Auth] Sending POST request with email and password`);
+    const response = await axios.post(`${STRAPI_URL}/admin/login`, { 
+      email, 
+      password 
     });
     
+    console.error(`[Auth] Response status: ${response.status}`);
+    console.error(`[Auth] Response headers:`, JSON.stringify(response.headers));
+    
+    // Check if we got back valid data
     if (response.data && response.data.data && response.data.data.token) {
       adminJwtToken = response.data.data.token;
       console.error("[Auth] Successfully logged in to Strapi admin");
+      console.error(`[Auth] Token received (first 20 chars): ${adminJwtToken?.substring(0, 20)}...`);
       return true;
     } else {
       console.error("[Auth] Login response missing token");
+      console.error(`[Auth] Response data:`, JSON.stringify(response.data));
       return false;
     }
   } catch (error) {
-    console.error("[Auth] Failed to log in to Strapi admin:", error);
+    console.error("[Auth] Failed to log in to Strapi admin:");
+    if (axios.isAxiosError(error)) {
+      console.error(`[Auth] Status: ${error.response?.status}`);
+      console.error(`[Auth] Response data:`, error.response?.data);
+      console.error(`[Auth] Request URL: ${error.config?.url}`);
+      console.error(`[Auth] Request method: ${error.config?.method}`);
+    } else {
+      console.error(error);
+    }
     return false;
   }
 }
@@ -162,16 +187,27 @@ async function loginToStrapiAdmin(): Promise<boolean> {
 async function makeAdminApiRequest(endpoint: string, method: string = 'get', data?: any, params?: Record<string, any>): Promise<any> { // Add params
   if (!adminJwtToken) {
     // Try to log in first
+    console.error(`[Admin API] No token available, attempting login...`);
     const success = await loginToStrapiAdmin();
     if (!success) {
+      console.error(`[Admin API] Login failed. Cannot authenticate for admin API access.`);
       throw new Error("Not authenticated for admin API access");
     }
+    console.error(`[Admin API] Login successful, proceeding with request.`);
+  }
+  
+  const fullUrl = `${STRAPI_URL}${endpoint}`;
+  console.error(`[Admin API] Making ${method.toUpperCase()} request to: ${fullUrl}`);
+  
+  if (data) {
+    console.error(`[Admin API] Request payload: ${JSON.stringify(data, null, 2)}`);
   }
   
   try {
+    console.error(`[Admin API] Sending request with Authorization header using token: ${adminJwtToken?.substring(0, 20)}...`);
     const response = await axios({
       method,
-      url: `${STRAPI_URL}${endpoint}`,
+      url: fullUrl,
       headers: {
         'Authorization': `Bearer ${adminJwtToken}`,
         'Content-Type': 'application/json'
@@ -180,32 +216,51 @@ async function makeAdminApiRequest(endpoint: string, method: string = 'get', dat
       params // Used for GET requests query parameters
     });
 
+    console.error(`[Admin API] Response status: ${response.status}`);
+    if (response.data) {
+      console.error(`[Admin API] Response received successfully`);
+    }
     return response.data;
   } catch (error) {
-    console.error(`[Admin API] Request to ${endpoint} failed:`, error);
-    // Check if it's an auth error (e.g., token expired)
-    if (axios.isAxiosError(error) && error.response?.status === 401 && adminJwtToken) {
+    console.error(`[Admin API] Request to ${endpoint} failed:`);
+    
+    if (axios.isAxiosError(error)) {
+      console.error(`[Admin API] Status: ${error.response?.status}`);
+      console.error(`[Admin API] Error data: ${JSON.stringify(error.response?.data)}`);
+      console.error(`[Admin API] Error headers: ${JSON.stringify(error.response?.headers)}`);
+      
+      // Check if it's an auth error (e.g., token expired)
+      if (error.response?.status === 401 && adminJwtToken) {
         console.error("[Admin API] Admin token might be expired. Attempting re-login...");
         adminJwtToken = null; // Clear expired token
         const loginSuccess = await loginToStrapiAdmin();
         if (loginSuccess) {
-            console.error("[Admin API] Re-login successful. Retrying original request...");
-            // Retry the request once after successful re-login
+          console.error("[Admin API] Re-login successful. Retrying original request...");
+          // Retry the request once after successful re-login
+          try {
             const retryResponse = await axios({
-                method,
-                url: `${STRAPI_URL}${endpoint}`,
-                headers: {
-                    'Authorization': `Bearer ${adminJwtToken}`,
-                    'Content-Type': 'application/json'
-                },
-                data,
-                params
+              method,
+              url: fullUrl,
+              headers: {
+                'Authorization': `Bearer ${adminJwtToken}`,
+                'Content-Type': 'application/json'
+              },
+              data,
+              params
             });
+            console.error(`[Admin API] Retry successful, status: ${retryResponse.status}`);
             return retryResponse.data;
+          } catch (retryError) {
+            console.error(`[Admin API] Retry failed:`, retryError);
+            throw retryError;
+          }
         } else {
-            console.error("[Admin API] Re-login failed. Throwing original error.");
-            throw new Error("Admin re-authentication failed after token expiry.");
+          console.error("[Admin API] Re-login failed. Throwing original error.");
+          throw new Error("Admin re-authentication failed after token expiry.");
         }
+      }
+    } else {
+      console.error(`[Admin API] Non-Axios error:`, error);
     }
     // If not a 401 or re-login failed, throw the original error
     throw error;
@@ -1211,7 +1266,7 @@ async function disconnectRelation(contentType: string, id: string, relationField
   */
  async function createContentType(contentTypeData: any): Promise<any> {
    try {
-     const { displayName, singularName, pluralName, kind = 'collectionType', attributes, options = { draftAndPublish: true }, description = "" } = contentTypeData;
+     const { displayName, singularName, pluralName, kind = 'collectionType', attributes, draftAndPublish = true, description = "" } = contentTypeData;
  
      if (!displayName || !singularName || !pluralName || !attributes) {
        throw new Error("Missing required fields: displayName, singularName, pluralName, attributes");
@@ -1222,38 +1277,79 @@ async function disconnectRelation(contentType: string, id: string, relationField
      const singularApiId = singularName.toLowerCase().replace(/\s+/g, '-');
      const pluralApiId = pluralName.toLowerCase().replace(/\s+/g, '-');
      const collectionName = pluralName.toLowerCase().replace(/\s+/g, '_'); // Table name often uses underscores
- 
+     
+     // For Strapi v4, the primary difference is in the nesting structure
+     // The data should be formatted exactly like in the Strapi UI
      const payload = {
        contentType: {
+         displayName: displayName,
+         singularName: singularApiId,
+         pluralName: pluralApiId,
+         description: description,
          kind: kind,
          collectionName: collectionName,
-         info: {
-           singularName: singularApiId,
-           pluralName: pluralApiId,
-           displayName: displayName,
-           description: description
+         options: {
+           draftAndPublish: draftAndPublish
          },
-         options: options,
-         // Ensure attributes is an object { fieldName: { type: 'string', ... }, ... }
+         pluginOptions: {},
          attributes: typeof attributes === 'object' && !Array.isArray(attributes) ? attributes : {}
        }
-       // Potentially add 'components' key if needed later
      };
  
      console.error(`[API] Creating new content type: ${displayName}`);
-     console.error(`[API] Payload: ${JSON.stringify(payload, null, 2)}`);
- 
-     // Use makeAdminApiRequest to ensure admin authentication
-     const response = await makeAdminApiRequest('/content-type-builder/content-types', 'post', payload);
- 
-     console.error(`[API] Content type creation response:`, response);
- 
-     // Strapi might restart after schema changes, response might vary
-     // Often returns { data: { uid: 'api::...' } } or similar on success
-     return response?.data || { message: "Content type creation initiated. Strapi might be restarting." };
- 
+     console.error(`[API] Attempting to create content type with payload: ${JSON.stringify(payload, null, 2)}`);
+     
+     // Make sure we're using the correct Content-Type Builder endpoint
+     // This is the documented endpoint for Strapi v4
+     const endpoint = '/content-type-builder/content-types';
+     console.error(`[API] Using endpoint: ${endpoint}`);
+     
+     try {
+       const response = await makeAdminApiRequest(endpoint, 'post', payload);
+       console.error(`[API] Raw response from makeAdminApiRequest (createContentType):`, response); 
+     
+       console.error(`[API] Content type creation response:`, response);
+     
+       // Strapi might restart after schema changes, response might vary
+       // Often returns { data: { uid: 'api::...' } } or similar on success
+       return response?.data || { message: "Content type creation initiated. Strapi might be restarting." };
+     } catch (apiError) {
+       console.error(`[API] CRITICAL ERROR in makeAdminApiRequest call:`, apiError);
+       
+       if (axios.isAxiosError(apiError) && apiError.response) {
+         // Log the complete error details for debugging
+         console.error(`[API] Status Code: ${apiError.response.status}`);
+         console.error(`[API] Status Text: ${apiError.response.statusText}`);
+         console.error(`[API] Response Headers:`, apiError.response.headers);
+         console.error(`[API] DETAILED ERROR PAYLOAD:`, JSON.stringify(apiError.response.data, null, 2));
+         
+         // Check for specific error messages from Strapi that indicate payload issues
+         if (apiError.response.status === 400) {
+           const errorData = apiError.response.data;
+           console.error(`[API] 400 BAD REQUEST - Payload validation error`);
+           
+           // Extract and log specific validation errors
+           if (errorData.error && errorData.message) {
+             console.error(`[API] Error Type: ${errorData.error}`);
+             console.error(`[API] Error Message: ${errorData.message}`);
+           }
+           
+           // Log any validation details
+           if (errorData.data && errorData.data.errors) {
+             console.error(`[API] Validation Errors:`, JSON.stringify(errorData.data.errors, null, 2));
+           }
+         }
+       }
+       throw apiError; // Re-throw to be caught by outer catch
+     }
    } catch (error: any) {
-     console.error(`[Error] Failed to create content type:`, error);
+     console.error(`[Error RAW] createContentType caught error:`, error); 
+     if (axios.isAxiosError(error) && error.response) {
+       console.error(`[Error DETAIL] Strapi error response data (createContentType): ${JSON.stringify(error.response.data)}`);
+       console.error(`[Error DETAIL] Strapi error response status (createContentType): ${error.response.status}`);
+       console.error(`[Error DETAIL] Strapi error response headers (createContentType): ${JSON.stringify(error.response.headers)}`);
+     }
+     console.error(`[Error] Failed to create content type:`, error); // This line was already there, keeping it for context
  
      let errorMessage = `Failed to create content type`;
      let errorCode = ExtendedErrorCode.InternalError;
