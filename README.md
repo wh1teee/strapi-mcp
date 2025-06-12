@@ -9,6 +9,8 @@ This MCP server integrates with any Strapi CMS instance to provide:
 - Tools to create and update content types in Strapi
 - Tools to manage content entries (create, read, update, delete)
 - Support for Strapi in development mode
+- **Robust error handling** with clear diagnostics and troubleshooting guidance
+- **Configuration validation** to prevent common setup issues
 
 ## Setup
 
@@ -29,7 +31,9 @@ This MCP server integrates with any Strapi CMS instance to provide:
  STRAPI_ADMIN_PASSWORD=your_admin_password
  # STRAPI_API_TOKEN=your_api_token_here # Optional
  ```
- **Important:** Add `.env` to your `.gitignore` file to avoid committing credentials.
+ **Important:** 
+ - Add `.env` to your `.gitignore` file to avoid committing credentials
+ - Avoid placeholder values like `"strapi_token"` - the server validates and rejects common placeholders
  
  ### Installation
 
@@ -90,6 +94,19 @@ node build/index.js
 
  ## Changelog
  
+ ### 0.1.8 - 2025-06-12
+ - **MAJOR BUG FIX:** Replaced silent failures with descriptive error messages when content types or entries cannot be fetched
+ - **Added Configuration Validation:** Detects placeholder API tokens and exits with helpful error messages
+ - **Added Connection Validation:** Tests Strapi connectivity before attempting operations with specific error diagnostics
+ - **Enhanced Error Handling:** Comprehensive error diagnostics that distinguish between legitimate empty collections vs actual errors
+ - **Improved Troubleshooting:** All error messages include specific steps to resolve common configuration issues
+
+ ### 0.1.7 - 2025-05-17
+ - **Added `publish_entry` and `unpublish_entry` tools:** Complete content lifecycle management
+ - **Added Component Management:** `list_components`, `get_component_schema`, `create_component`, `update_component`
+ - **Added `delete_content_type` tool:** Delete existing content types via the Content-Type Builder API
+ - **Enhanced Admin Authentication:** Better error handling and token management for all API operations
+
  ### 0.1.6
  - **Added `create_content_type` tool:** Allows creating new content types via the Content-Type Builder API (requires admin credentials).
  - **Prioritized Admin Credentials:** Updated logic to prefer admin email/password for fetching content types and schemas, improving reliability.
@@ -289,6 +306,51 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 3. Click "Create new API Token"
 4. Set a name, description, and token type (preferably "Full access")
 5. Copy the generated token and use it in your MCP server configuration
+
+### Troubleshooting
+
+**Common Issues and Solutions:**
+
+#### 1. **Placeholder API Token Error**
+```
+[Error] STRAPI_API_TOKEN appears to be a placeholder value...
+```
+**Solution:** Replace `"strapi_token"` or `"your-api-token-here"` with a real API token from your Strapi admin panel.
+
+#### 2. **Connection Refused Error**
+```
+Cannot connect to Strapi instance: Connection refused. Is Strapi running at http://localhost:1337?
+```
+**Solution:** 
+- Ensure Strapi is running: `npm run develop` or `yarn develop`
+- Check if the URL in `STRAPI_URL` is correct
+- Verify your database (MySQL/PostgreSQL) is running
+
+#### 3. **Authentication Failed**
+```
+Cannot connect to Strapi instance: Authentication failed. Check your API token or admin credentials.
+```
+**Solution:**
+- Verify your API token has proper permissions (preferably "Full access")
+- Check admin email/password are correct
+- Ensure the admin user exists and is active
+
+#### 4. **Fake Content Types** (`api::data.data`, `api::error.error`)
+This issue has been **fixed in v0.1.8**. If you still see these, you may be using an older version.
+
+#### 5. **Empty Results vs Errors**
+As of v0.1.8, the server now clearly distinguishes between:
+- **Empty collections** (content type exists but has no entries) → Returns `{"data": [], "meta": {...}}`
+- **Actual errors** (content type doesn't exist, auth failed, etc.) → Throws descriptive error with troubleshooting steps
+
+#### 6. **Permission Errors**
+```
+Access forbidden. Your API token may lack necessary permissions.
+```
+**Solution:**
+- Use admin credentials instead of API token for full functionality
+- If using API token, ensure it has "Full access" permissions
+- Check that the content type allows public access if using limited API token
 
 ### Debugging
 

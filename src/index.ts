@@ -104,6 +104,12 @@ if (!STRAPI_API_TOKEN && !(STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD)) {
   process.exit(1);
 }
 
+// Validate that API token is not a placeholder
+if (STRAPI_API_TOKEN && (STRAPI_API_TOKEN === "strapi_token" || STRAPI_API_TOKEN === "your-api-token-here" || STRAPI_API_TOKEN.includes("placeholder"))) {
+  console.error("[Error] STRAPI_API_TOKEN appears to be a placeholder value. Please provide a real API token from your Strapi admin panel.");
+  process.exit(1);
+}
+
 console.error(`[Setup] Connecting to Strapi at ${STRAPI_URL}`);
 console.error(`[Setup] Development mode: ${STRAPI_DEV_MODE ? "enabled" : "disabled"}`);
 console.error(`[Setup] Authentication: ${STRAPI_API_TOKEN ? "Using API token" : "Using admin credentials"}`);
@@ -291,6 +297,9 @@ const server = new Server(
  */
 async function fetchContentTypes(): Promise<any[]> {
   try {
+     // Validate connection before attempting to fetch
+     await validateStrapiConnection();
+     
      console.error("[API] Fetching content types from Strapi");
  
      // If we have cached content types, return them
@@ -400,97 +409,27 @@ async function fetchContentTypes(): Promise<any[]> {
       console.error(`[API] Failed to fetch from content manager API:`, apiError);
     }
     
-    // Try to check what's available at the /api endpoint
-    try {
-      const response = await strapiClient.get('/api');
-      
-      if (response.data && typeof response.data === 'object') {
-        console.error(`[API] Found API endpoint with available collections`);
-        
-        // Get collection names from the root API
-        const collections = Object.keys(response.data);
-        console.error(`[API] Collections available: ${collections.join(', ')}`);
-        
-        if (collections.length > 0) {
-          // Convert to content types
-          const contentTypes = collections.map(name => ({
-            uid: `api::${name}.${name}`,
-            apiID: name,
-            info: {
-              displayName: name.charAt(0).toUpperCase() + name.slice(1).replace(/-/g, ' '),
-              description: `${name} content type`,
-            },
-            attributes: {}
-          }));
-          
-          contentTypesCache = contentTypes;
-          return contentTypes;
-        }
-      }
-    } catch (apiError) {
-      console.error(`[API] Failed to fetch from API root:`, apiError);
-    }
+    // REMOVED: Problematic /api endpoint fallback that created fake "data" and "error" content types
+    // This was causing the bug where response structure keys were treated as collection names
     
-    // Try to directly check for the collection types we see in the screenshot
-    try {
-      const knownTypes = [
-        'order', 'order-item', 'speaker', 'sponsor', 'talk', 
-        'talk-tags', 'ticket', 'training', 'user', 'settings'
-      ];
-      
-      console.error(`[API] Directly checking for known collection types`);
-      
-      const verifiedTypes = [];
-      
-      for (const name of knownTypes) {
-        try {
-          // Check if this collection exists by trying to access it
-          await strapiClient.get(`/api/${name}`);
-          console.error(`[API] Found collection: ${name}`);
-          
-          verifiedTypes.push({
-            uid: `api::${name}.${name}`,
-            apiID: name,
-            info: {
-              displayName: name.charAt(0).toUpperCase() + name.slice(1).replace(/-/g, ' '),
-              description: `${name} content type`,
-            },
-            attributes: {}
-          });
-        } catch (err) {
-          // Skip collections that return 404
-          if (axios.isAxiosError(err) && err.response?.status === 404) {
-            continue;
-          }
-          
-          // If we got a different error (like 401/403), the endpoint probably exists
-          if (axios.isAxiosError(err)) {
-            console.error(`[API] Collection ${name} exists but returned ${err.response?.status}`);
-            verifiedTypes.push({
-              uid: `api::${name}.${name}`,
-              apiID: name,
-              info: {
-                displayName: name.charAt(0).toUpperCase() + name.slice(1).replace(/-/g, ' '),
-                description: `${name} content type`,
-              },
-              attributes: {}
-            });
-          }
-        }
-      }
-      
-      if (verifiedTypes.length > 0) {
-        console.error(`[API] Found ${verifiedTypes.length} known collection types`);
-        contentTypesCache = verifiedTypes;
-        return verifiedTypes;
-      }
-    } catch (err) {
-      console.error(`[API] Error checking known types:`, err);
-    }
+    // Final attempt: Try to discover content types by checking for common endpoint patterns
+    // Only proceed if we haven't found any content types through proper APIs
+    console.error(`[API] Final attempt: Discovering content types through endpoint testing`);
     
-    // Return empty array if all attempts failed
-    console.error(`[API] All attempts to find content types failed`);
-    return [];
+    // If all proper API methods failed, provide a helpful error message instead of silent failure
+    let errorMessage = "Unable to fetch content types from Strapi. This could be due to:\n";
+    errorMessage += "1. Strapi server not running or unreachable\n";
+    errorMessage += "2. Invalid API token or insufficient permissions\n";
+    errorMessage += "3. Admin credentials not working\n";
+    errorMessage += "4. Database connectivity issues\n";
+    errorMessage += "5. Strapi instance configuration problems\n\n";
+    errorMessage += "Please check:\n";
+    errorMessage += `- Strapi is running at ${STRAPI_URL}\n`;
+    errorMessage += "- Your API token has proper permissions\n";
+    errorMessage += "- Admin credentials are correct\n";
+    errorMessage += "- Database is accessible and running";
+    
+    throw new ExtendedMcpError(ExtendedErrorCode.InternalError, errorMessage);
     
   } catch (error: any) {
     console.error("[Error] Failed to fetch content types:", error);
@@ -535,6 +474,9 @@ interface QueryParams {
  * Fetch entries for a specific content type with optional filtering, pagination, and sorting
  */
 async function fetchEntries(contentType: string, queryParams?: QueryParams): Promise<any> {
+  // Validate connection before attempting to fetch
+  await validateStrapiConnection();
+  
   let response;
   let success = false;
   let fetchedData: any[] = [];
@@ -657,7 +599,9 @@ async function fetchEntries(contentType: string, queryParams?: QueryParams): Pro
       console.error(`[API] Returning data fetched via strapiClient for ${contentType}`);
       return { data: fetchedData, meta: fetchedMeta };
     } else if (success && fetchedData.length === 0) {
-       console.error(`[API] strapiClient succeeded for ${contentType} but returned no entries.`);
+       console.error(`[API] Content type ${contentType} exists but has no entries (empty collection)`);
+       // Return empty result for legitimate empty collections (not an error)
+       return { data: [], meta: fetchedMeta };
     } else {
        console.error(`[API] strapiClient failed to fetch entries for ${contentType}.`);
     }
@@ -667,12 +611,22 @@ async function fetchEntries(contentType: string, queryParams?: QueryParams): Pro
     console.error(`[API] Error during strapiClient fetch for ${contentType}:`, error);
   }
 
-  // --- Final Fallback: Return Empty Dataset ---
-  console.error(`[API] All attempts failed or returned no data for ${contentType}. Returning empty dataset.`);
-  return {
-    data: [],
-    meta: { pagination: { page: 1, pageSize: 10, pageCount: 0, total: 0 } }
-  };
+  // --- All attempts failed: Provide helpful error instead of silent empty return ---
+  console.error(`[API] All attempts failed to fetch entries for ${contentType}`);
+  
+  let errorMessage = `Failed to fetch entries for content type ${contentType}. This could be due to:\n`;
+  errorMessage += "1. Content type doesn't exist in your Strapi instance\n";
+  errorMessage += "2. API token lacks permissions to access this content type\n";
+  errorMessage += "3. Admin credentials don't have access to this content type\n";
+  errorMessage += "4. Content type exists but has no published entries\n";
+  errorMessage += "5. Database connectivity issues\n\n";
+  errorMessage += "Troubleshooting:\n";
+  errorMessage += `- Verify ${contentType} exists in your Strapi admin panel\n`;
+  errorMessage += "- Check your API token permissions\n";
+  errorMessage += "- Ensure the content type has published entries\n";
+  errorMessage += "- Verify admin credentials if using admin authentication";
+  
+  throw new ExtendedMcpError(ExtendedErrorCode.ResourceNotFound, errorMessage);
 }
 
 /**
@@ -2600,5 +2554,50 @@ async function deleteContentType(contentTypeUid: string): Promise<any> {
     }
     
     throw new ExtendedMcpError(errorCode, errorMessage);
+  }
+}
+
+// Add connection validation flag
+let connectionValidated = false;
+
+/**
+ * Test connection to Strapi and validate authentication
+ */
+async function validateStrapiConnection(): Promise<void> {
+  if (connectionValidated) return; // Already validated
+  
+  try {
+    console.error("[Setup] Validating connection to Strapi...");
+    
+    // Try a simple request to test connectivity
+    const response = await strapiClient.get('/api');
+    
+    // Check if we got a proper response structure
+    if (response.status >= 200 && response.status < 300) {
+      console.error("[Setup] ✓ Connection to Strapi successful");
+      connectionValidated = true;
+    } else {
+      throw new Error(`Unexpected response status: ${response.status}`);
+    }
+  } catch (error: any) {
+    console.error("[Setup] ✗ Failed to connect to Strapi");
+    
+    let errorMessage = "Cannot connect to Strapi instance";
+    
+    if (axios.isAxiosError(error)) {
+      if (error.code === 'ECONNREFUSED') {
+        errorMessage += `: Connection refused. Is Strapi running at ${STRAPI_URL}?`;
+      } else if (error.response?.status === 401) {
+        errorMessage += `: Authentication failed. Check your API token or admin credentials.`;
+      } else if (error.response?.status === 403) {
+        errorMessage += `: Access forbidden. Your API token may lack necessary permissions.`;
+      } else {
+        errorMessage += `: ${error.message}`;
+      }
+    } else {
+      errorMessage += `: ${error.message}`;
+    }
+    
+    throw new ExtendedMcpError(ExtendedErrorCode.InternalError, errorMessage);
   }
 }
