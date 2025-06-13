@@ -104,15 +104,29 @@ if (!STRAPI_API_TOKEN && !(STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD)) {
   process.exit(1);
 }
 
-// Validate that API token is not a placeholder
-if (STRAPI_API_TOKEN && (STRAPI_API_TOKEN === "strapi_token" || STRAPI_API_TOKEN === "your-api-token-here" || STRAPI_API_TOKEN.includes("placeholder"))) {
-  console.error("[Error] STRAPI_API_TOKEN appears to be a placeholder value. Please provide a real API token from your Strapi admin panel.");
-  process.exit(1);
+// Only validate API token format if we don't have admin credentials (since admin creds take priority)
+if (!STRAPI_ADMIN_EMAIL || !STRAPI_ADMIN_PASSWORD) {
+  // If no admin credentials, validate that API token is not a placeholder
+  if (STRAPI_API_TOKEN && (STRAPI_API_TOKEN === "strapi_token" || STRAPI_API_TOKEN === "your-api-token-here" || STRAPI_API_TOKEN.includes("placeholder"))) {
+    console.error("[Error] STRAPI_API_TOKEN appears to be a placeholder value. Please provide a real API token from your Strapi admin panel or use admin credentials instead.");
+    process.exit(1);
+  }
 }
 
 console.error(`[Setup] Connecting to Strapi at ${STRAPI_URL}`);
 console.error(`[Setup] Development mode: ${STRAPI_DEV_MODE ? "enabled" : "disabled"}`);
-console.error(`[Setup] Authentication: ${STRAPI_API_TOKEN ? "Using API token" : "Using admin credentials"}`);
+
+// Determine authentication method priority
+if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+  console.error(`[Setup] Authentication: Using admin credentials (priority)`);
+  if (STRAPI_API_TOKEN && STRAPI_API_TOKEN !== "strapi_token" && !STRAPI_API_TOKEN.includes("placeholder")) {
+    console.error(`[Setup] API token also available as fallback`);
+  }
+} else if (STRAPI_API_TOKEN) {
+  console.error(`[Setup] Authentication: Using API token`);
+} else {
+  console.error(`[Setup] Authentication: ERROR - No valid authentication method available`);
+}
 
 // Axios instance for Strapi API
 const strapiClient = axios.create({
