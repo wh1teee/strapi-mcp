@@ -353,7 +353,6 @@ async function fetchContentTypes(): Promise<any[]> {
     };
  
      // --- Attempt 1: Use Admin Credentials if available ---
-     // DEBUG: Log the values the function sees
      console.error(`[DEBUG] Checking admin creds: EMAIL=${Boolean(STRAPI_ADMIN_EMAIL)}, PASSWORD=${Boolean(STRAPI_ADMIN_PASSWORD)}`);
      if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
        console.error("[API] Attempting to fetch content types using admin credentials");
@@ -363,6 +362,8 @@ async function fetchContentTypes(): Promise<any[]> {
          console.error("[API] Trying admin endpoint: /content-type-builder/content-types");
          const adminResponse = await makeAdminApiRequest('/content-type-builder/content-types');
  
+         console.error("[API] Admin response structure:", Object.keys(adminResponse || {}));
+         
          // Strapi's admin API often wraps data, check common structures
          let adminData = null;
         if (adminResponse && adminResponse.data && Array.isArray(adminResponse.data)) {
@@ -371,20 +372,46 @@ async function fetchContentTypes(): Promise<any[]> {
             adminData = adminResponse; // Direct array response
         }
         
-        if (adminData) {
-          return processAndCacheContentTypes(adminData, "Admin API (/content-manager/collection-types)");
+        if (adminData && adminData.length > 0) {
+          return processAndCacheContentTypes(adminData, "Admin API (/content-type-builder/content-types)");
         } else {
-           console.error("[API] Admin API response did not contain expected data array.", adminResponse);
+           console.error("[API] Admin API response did not contain expected data array or was empty.", adminResponse);
         }
       } catch (adminError) {
         console.error(`[API] Failed to fetch content types using admin credentials:`, adminError);
+        if (axios.isAxiosError(adminError)) {
+          console.error(`[API] Admin API Error Status: ${adminError.response?.status}`);
+          console.error(`[API] Admin API Error Data:`, adminError.response?.data);
+        }
         // Don't throw, proceed to next method
       }
     } else {
        console.error("[API] Admin credentials not provided, skipping admin API attempt.");
     }
 
-    // --- Attempt 2: Use API Token via strapiClient (Original Primary Method) ---
+    // --- Attempt 2: Try different admin endpoints ---
+    if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+      console.error("[API] Trying alternative admin endpoint: /content-manager/content-types");
+      try {
+        const adminResponse2 = await makeAdminApiRequest('/content-manager/content-types');
+        console.error("[API] Admin response 2 structure:", Object.keys(adminResponse2 || {}));
+        
+        let adminData2 = null;
+        if (adminResponse2 && adminResponse2.data && Array.isArray(adminResponse2.data)) {
+            adminData2 = adminResponse2.data;
+        } else if (adminResponse2 && Array.isArray(adminResponse2)) {
+            adminData2 = adminResponse2;
+        }
+        
+        if (adminData2 && adminData2.length > 0) {
+          return processAndCacheContentTypes(adminData2, "Admin API (/content-manager/content-types)");
+        }
+      } catch (adminError2) {
+        console.error(`[API] Alternative admin endpoint also failed:`, adminError2);
+      }
+    }
+
+    // --- Attempt 3: Use API Token via strapiClient (Original Primary Method) ---
     console.error("[API] Attempting to fetch content types using API token (strapiClient)");
     try {
       // This is the most reliable way *if* the token has permissions
@@ -393,43 +420,49 @@ async function fetchContentTypes(): Promise<any[]> {
       if (response.data && Array.isArray(response.data)) {
         // Note: This path might require admin permissions, often fails with API token
         return processAndCacheContentTypes(response.data, "Content Manager API (/content-manager/collection-types)");
-        
-        // Transform to our expected format
-        const contentTypes = response.data.map((item: any) => {
-          const uid = item.uid;
-          const apiID = uid.split('.').pop() || '';
-          return {
-            uid: uid,
-            apiID: apiID,
-            info: {
-              displayName: item.info?.displayName || apiID.charAt(0).toUpperCase() + apiID.slice(1).replace(/-/g, ' '),
-              description: item.info?.description || `${apiID} content type`,
-            },
-            attributes: item.attributes || {}
-          };
-        });
-        
-        // Filter out internal types
-        const filteredTypes = contentTypes.filter((ct: any) => 
-          !ct.uid.startsWith("admin::") && 
-          !ct.uid.startsWith("plugin::")
-        );
-        
-        console.error(`[API] Found ${filteredTypes.length} content types`);
-        contentTypesCache = filteredTypes;
-        return filteredTypes;
       }
     } catch (apiError) {
       console.error(`[API] Failed to fetch from content manager API:`, apiError);
+      if (axios.isAxiosError(apiError)) {
+        console.error(`[API] API Error Status: ${apiError.response?.status}`);
+        console.error(`[API] API Error Data:`, apiError.response?.data);
+      }
     }
     
-    // REMOVED: Problematic /api endpoint fallback that created fake "data" and "error" content types
-    // This was causing the bug where response structure keys were treated as collection names
+    // --- Attempt 4: Discovery via exploring known endpoints ---
+    console.error(`[API] Trying content type discovery via known patterns...`);
+    
+    // Try to discover by checking common content types
+    const commonTypes = ['article', 'page', 'post', 'user', 'category'];
+    const discoveredTypes = [];
+    
+    for (const type of commonTypes) {
+      try {
+        const testResponse = await strapiClient.get(`/api/${type}?pagination[limit]=1`);
+        if (testResponse.status === 200) {
+          console.error(`[API] Discovered content type: api::${type}.${type}`);
+          discoveredTypes.push({
+            uid: `api::${type}.${type}`,
+            apiID: type,
+            info: {
+              displayName: type.charAt(0).toUpperCase() + type.slice(1),
+              description: `${type} content type (discovered)`,
+            },
+            attributes: {}
+          });
+        }
+      } catch (e) {
+        // Ignore 404s and continue
+      }
+    }
+    
+    if (discoveredTypes.length > 0) {
+      console.error(`[API] Found ${discoveredTypes.length} content types via discovery`);
+      contentTypesCache = discoveredTypes;
+      return discoveredTypes;
+    }
     
     // Final attempt: Try to discover content types by checking for common endpoint patterns
-    // Only proceed if we haven't found any content types through proper APIs
-    console.error(`[API] Final attempt: Discovering content types through endpoint testing`);
-    
     // If all proper API methods failed, provide a helpful error message instead of silent failure
     let errorMessage = "Unable to fetch content types from Strapi. This could be due to:\n";
     errorMessage += "1. Strapi server not running or unreachable\n";
@@ -441,7 +474,8 @@ async function fetchContentTypes(): Promise<any[]> {
     errorMessage += `- Strapi is running at ${STRAPI_URL}\n`;
     errorMessage += "- Your API token has proper permissions\n";
     errorMessage += "- Admin credentials are correct\n";
-    errorMessage += "- Database is accessible and running";
+    errorMessage += "- Database is accessible and running\n";
+    errorMessage += "- Try creating a test content type in your Strapi admin panel";
     
     throw new ExtendedMcpError(ExtendedErrorCode.InternalError, errorMessage);
     
@@ -2583,15 +2617,50 @@ async function validateStrapiConnection(): Promise<void> {
   try {
     console.error("[Setup] Validating connection to Strapi...");
     
-    // Try a simple request to test connectivity
-    const response = await strapiClient.get('/api');
+    // Try a simple request to test connectivity - use a valid endpoint
+    // Try the admin/users/me endpoint to test admin authentication
+    // or fall back to a public content endpoint
+    let response;
+    let authMethod = "";
     
-    // Check if we got a proper response structure
-    if (response.status >= 200 && response.status < 300) {
-      console.error("[Setup] ✓ Connection to Strapi successful");
+    // First try admin authentication if available
+    if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+      try {
+        // Test admin login
+        await loginToStrapiAdmin();
+        response = await makeAdminApiRequest('/admin/users/me');
+        authMethod = "admin credentials";
+        console.error("[Setup] ✓ Admin authentication successful");
+      } catch (adminError) {
+        console.error("[Setup] Admin authentication failed, trying API token...");
+        throw adminError; // Fall through to API token test
+      }
+    } else {
+      throw new Error("No admin credentials, trying API token");
+    }
+    
+    // If admin failed or not available, try API token
+    if (!response) {
+      try {
+        // Try a simple endpoint that should exist - use upload/files to test API token
+        response = await strapiClient.get('/api/upload/files?pagination[limit]=1');
+        authMethod = "API token";
+        console.error("[Setup] ✓ API token authentication successful");
+      } catch (apiError) {
+        console.error("[Setup] API token test failed, trying root endpoint...");
+        // Last resort - try to hit the root to see if server is running
+        response = await strapiClient.get('/');
+        authMethod = "server connection";
+        console.error("[Setup] ✓ Server is reachable");
+      }
+    }
+    
+    // Check if we got a proper response
+    if (response && response.status >= 200 && response.status < 300) {
+      console.error(`[Setup] ✓ Connection to Strapi successful using ${authMethod}`);
       connectionValidated = true;
     } else {
-      throw new Error(`Unexpected response status: ${response.status}`);
+      throw new Error(`Unexpected response status: ${response?.status}`);
     }
   } catch (error: any) {
     console.error("[Setup] ✗ Failed to connect to Strapi");
@@ -2605,6 +2674,8 @@ async function validateStrapiConnection(): Promise<void> {
         errorMessage += `: Authentication failed. Check your API token or admin credentials.`;
       } else if (error.response?.status === 403) {
         errorMessage += `: Access forbidden. Your API token may lack necessary permissions.`;
+      } else if (error.response?.status === 404) {
+        errorMessage += `: Endpoint not found. Strapi server might be running but not properly configured.`;
       } else {
         errorMessage += `: ${error.message}`;
       }
