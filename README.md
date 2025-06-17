@@ -2,6 +2,8 @@
 
 An MCP server for Strapi CMS, providing access to content types and entries through the Model Context Protocol.
 
+
+
 ## Overview
 
 This MCP server integrates with any Strapi CMS instance to provide:
@@ -37,8 +39,18 @@ This MCP server integrates with any Strapi CMS instance to provide:
  
  ### Installation
 
+#### Install from npm (Recommended)
 ```bash
 npm install strapi-mcp
+```
+
+#### Install from source (Development)
+For the latest development features:
+```bash
+git clone https://github.com/l33tdawg/strapi-mcp.git
+cd strapi-mcp
+npm install
+npm run build
 ```
 
  ### Running
@@ -47,6 +59,19 @@ npm install strapi-mcp
 
 For Cursor users, configure the strapi-mcp server in your `~/.cursor/mcp.json` file:
 
+```json
+"strapi-mcp": {
+  "command": "npx",
+  "args": ["strapi-mcp"], 
+  "env": {
+    "STRAPI_URL": "http://localhost:1337",
+    "STRAPI_ADMIN_EMAIL": "your_admin_email@example.com",
+    "STRAPI_ADMIN_PASSWORD": "your_admin_password"
+  }
+}
+```
+
+If you installed from source, use the direct path instead:
 ```json
 "strapi-mcp": {
   "command": "node",
@@ -270,11 +295,28 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 {
   "mcpServers": {
     "strapi-mcp": {
+      "command": "npx",
+      "args": ["strapi-mcp"],
+      "env": {
+        "STRAPI_URL": "http://localhost:1337",
+        "STRAPI_ADMIN_EMAIL": "your_admin_email@example.com",
+        "STRAPI_ADMIN_PASSWORD": "your_admin_password"
+      }
+    }
+  }
+}
+```
+
+If you installed from source, use the direct path:
+```json
+{
+  "mcpServers": {
+    "strapi-mcp": {
       "command": "/path/to/strapi-mcp/build/index.js",
       "env": {
         "STRAPI_URL": "http://localhost:1337",
-        "STRAPI_API_TOKEN": "your-api-token-here",
-        "STRAPI_DEV_MODE": "false"
+        "STRAPI_ADMIN_EMAIL": "your_admin_email@example.com",
+        "STRAPI_ADMIN_PASSWORD": "your_admin_password"
       }
     }
   }

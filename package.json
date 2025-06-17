@@ -3,48 +3,48 @@
    "version": "0.1.8",
    "description": "An MCP server for your Strapi CMS that provides access to content types and entries through the MCP protocol",
    "private": false,
-  "keywords": [
-    "strapi",
-    "cms",
-    "content-management",
-    "mcp",
-    "headless-cms"
-  ],
-  "author": "l33tdawg <l33tdawg@hackinthebox.org>",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/l33tdawg/strapi-mcp.git"
-  },
-  "homepage": "https://github.com/l33tdawg/strapi-mcp#readme",
-  "bugs": {
-    "url": "https://github.com/l33tdawg/strapi-mcp/issues"
-  },
-  "type": "module",
-  "bin": {
-    "strapi-mcp": "./build/index.js"
-  },
-  "files": [
-    "build"
-  ],
-  "scripts": {
-    "build": "tsc --skipLibCheck && chmod +x build/index.js",
-    "prepare": "npm run build",
-    "watch": "tsc --watch",
-    "inspector": "npx @modelcontextprotocol/inspector build/index.js",
-    "generate-test-image": "node scripts/generate-test-image.js"
-  },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "1.10.2",
-    "axios": "^1.6.7",
-    "dotenv": "^16.4.5",
-    "form-data": "^4.0.2"
-  },
-  "devDependencies": {
-    "@types/form-data": "^2.2.1",
-    "@types/node": "^20.11.24",
-    "canvas": "^3.1.0",
-    "dotenv-cli": "^8.0.0",
-    "typescript": "^5.3.3"
-  }
+   "keywords": [
+      "strapi",
+      "cms",
+      "content-management",
+      "mcp",
+      "headless-cms"
+   ],
+   "author": "l33tdawg <l33tdawg@hackinthebox.org>",
+   "license": "MIT",
+   "repository": {
+      "type": "git",
+      "url": "git+https://github.com/l33tdawg/strapi-mcp.git"
+   },
+   "homepage": "https://github.com/l33tdawg/strapi-mcp#readme",
+   "bugs": {
+      "url": "https://github.com/l33tdawg/strapi-mcp/issues"
+   },
+   "type": "module",
+   "bin": {
+      "strapi-mcp": "build/index.js"
+   },
+   "files": [
+      "build"
+   ],
+   "scripts": {
+      "build": "tsc --skipLibCheck && chmod +x build/index.js",
+      "prepare": "npm run build",
+      "watch": "tsc --watch",
+      "inspector": "npx @modelcontextprotocol/inspector build/index.js",
+      "generate-test-image": "node scripts/generate-test-image.js"
+   },
+   "dependencies": {
+      "@modelcontextprotocol/sdk": "1.10.2",
+      "axios": "^1.6.7",
+      "dotenv": "^16.4.5",
+      "form-data": "^4.0.2"
+   },
+   "devDependencies": {
+      "@types/form-data": "^2.2.1",
+      "@types/node": "^20.11.24",
+      "canvas": "^3.1.0",
+      "dotenv-cli": "^8.0.0",
+      "typescript": "^5.3.3"
+   }
 }
