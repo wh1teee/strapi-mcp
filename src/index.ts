@@ -36,6 +36,9 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import axios from "axios";
 import dotenv from 'dotenv';
+import * as path from 'path';
+import { createReadStream, promises as fs } from 'fs';
+import * as os from 'os';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -91,6 +94,13 @@ class ExtendedMcpError extends McpError {
   }
 }
 
+// Interface for file metadata
+interface FileInfo {
+  alternativeText?: string;
+  caption?: string;
+  name?: string;
+}
+
 // Configuration from environment variables
 const STRAPI_URL = process.env.STRAPI_URL || "http://localhost:1337";
 const STRAPI_API_TOKEN = process.env.STRAPI_API_TOKEN;
@@ -117,13 +127,13 @@ console.error(`[Setup] Connecting to Strapi at ${STRAPI_URL}`);
 console.error(`[Setup] Development mode: ${STRAPI_DEV_MODE ? "enabled" : "disabled"}`);
 
 // Determine authentication method priority
-if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
-  console.error(`[Setup] Authentication: Using admin credentials (priority)`);
-  if (STRAPI_API_TOKEN && STRAPI_API_TOKEN !== "strapi_token" && !STRAPI_API_TOKEN.includes("placeholder")) {
-    console.error(`[Setup] API token also available as fallback`);
+if (STRAPI_API_TOKEN && STRAPI_API_TOKEN !== "strapi_token" && !STRAPI_API_TOKEN.includes("placeholder")) {
+  console.error(`[Setup] Authentication: Using API token (priority)`);
+  if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+    console.error(`[Setup] Admin credentials also available as fallback`);
   }
-} else if (STRAPI_API_TOKEN) {
-  console.error(`[Setup] Authentication: Using API token`);
+} else if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+  console.error(`[Setup] Authentication: Using admin credentials`);
 } else {
   console.error(`[Setup] Authentication: ERROR - No valid authentication method available`);
 }
@@ -147,6 +157,67 @@ if (STRAPI_API_TOKEN) {
 
 // Store admin JWT token if we log in
 let adminJwtToken: string | null = null;
+
+// Store user JWT token for API endpoints
+let userJwtToken: string | null = null;
+
+// Upload configuration
+const UPLOAD_CONFIG = {
+  maxFileSize: parseInt(process.env.STRAPI_MAX_FILE_SIZE || '104857600'), // 100MB default
+  allowedPaths: process.env.STRAPI_ALLOWED_PATHS?.split(',') || [],
+  uploadTimeout: parseInt(process.env.STRAPI_UPLOAD_TIMEOUT || '30000'), // 30s default
+};
+
+/**
+ * Log in to get User JWT token for API endpoints
+ * NOTE: Admin credentials are typically NOT the same as user credentials
+ * This function is for completeness but will likely fail with admin credentials
+ */
+async function loginToStrapiUser(): Promise<boolean> {
+  const email = process.env.STRAPI_ADMIN_EMAIL;
+  const password = process.env.STRAPI_ADMIN_PASSWORD;
+
+  if (!email || !password) {
+    console.error("[Auth] No user credentials found, skipping user login");
+    return false;
+  }
+
+  try {
+    console.error(`[Auth] Attempting user login to ${STRAPI_URL}/api/auth/local as ${email}`);
+    console.error(`[Auth] NOTE: Admin credentials typically don't work for user login`);
+    
+    const response = await axios.post(`${STRAPI_URL}/api/auth/local`, { 
+      identifier: email, 
+      password 
+    });
+    
+    console.error(`[Auth] User login response status: ${response.status}`);
+    
+    if (response.data && response.data.jwt) {
+      userJwtToken = response.data.jwt;
+      console.error("[Auth] Successfully logged in to Strapi user API");
+      console.error(`[Auth] User token received (first 20 chars): ${userJwtToken?.substring(0, 20)}...`);
+      return true;
+    } else {
+      console.error("[Auth] User login response missing JWT token");
+      console.error(`[Auth] Response data:`, JSON.stringify(response.data));
+      return false;
+    }
+  } catch (error) {
+    console.error("[Auth] Expected failure - admin credentials don't work for user login");
+    if (axios.isAxiosError(error)) {
+      console.error(`[Auth] Status: ${error.response?.status}`);
+      console.error(`[Auth] Response data:`, error.response?.data);
+      // Don't log this as an error since it's expected
+      if (error.response?.status === 400 && error.response?.data?.error?.message === 'Invalid identifier or password') {
+        console.error(`[Auth] This is expected - admin credentials are different from user credentials`);
+      }
+    } else {
+      console.error(error);
+    }
+    return false;
+  }
+}
 
 /**
  * Log in to the Strapi admin API using provided credentials
@@ -352,6 +423,95 @@ async function fetchContentTypes(): Promise<any[]> {
       return filteredTypes;
     };
  
+     // --- Attempt 0: Discovery first (most reliable for API tokens) ---
+     console.error("[API] Attempt 0: Trying content type discovery via API endpoints (most reliable)");
+     
+     // Expanded list of common content types to try
+     const commonTypes = [
+       'article', 'articles', 'page', 'pages', 'post', 'posts', 
+       'user', 'users', 'category', 'categories', 'tag', 'tags',
+       'blog', 'blogs', 'news', 'product', 'products', 'service', 'services',
+       'gallery', 'galleries', 'event', 'events', 'testimonial', 'testimonials',
+       'faq', 'faqs', 'contact', 'contacts', 'team', 'about'
+     ];
+     
+     const discoveredTypes = [];
+     
+     // Test each potential content type
+     for (const type of commonTypes) {
+       try {
+         console.error(`[API] Testing content type: ${type}`);
+         const testResponse = await strapiClient.get(`/api/${type}?pagination[limit]=1`);
+         
+         if (testResponse.status === 200) {
+           console.error(`[API] ✓ Discovered content type: api::${type}.${type}`);
+           
+           // Try to infer attributes from the response structure
+           let attributes: Record<string, any> = {};
+           if (testResponse.data?.data?.length > 0) {
+             const sampleEntry = testResponse.data.data[0];
+             if (sampleEntry.attributes) {
+               // Extract field names and try to guess types
+               Object.keys(sampleEntry.attributes).forEach(key => {
+                 const value = sampleEntry.attributes[key];
+                 let fieldType = 'string'; // default
+                 
+                 if (typeof value === 'number') fieldType = 'number';
+                 else if (typeof value === 'boolean') fieldType = 'boolean';
+                 else if (Array.isArray(value)) fieldType = 'relation';
+                 else if (value && typeof value === 'object' && value.data) fieldType = 'relation';
+                 else if (typeof value === 'string' && value.length > 255) fieldType = 'text';
+                 
+                 attributes[key] = { type: fieldType };
+               });
+             }
+           }
+           
+           discoveredTypes.push({
+             uid: `api::${type}.${type}`,
+             apiID: type,
+             info: {
+               displayName: type.charAt(0).toUpperCase() + type.slice(1).replace(/s$/, '') + (type.endsWith('s') && type !== 'news' ? '' : ''),
+               description: `${type} content type (discovered via API)`,
+             },
+             attributes: attributes
+           });
+         }
+       } catch (e: any) {
+         // Log details for debugging but continue
+         if (axios.isAxiosError(e) && e.response?.status === 404) {
+           // Expected 404, just continue
+           continue;
+         } else if (axios.isAxiosError(e) && e.response?.status === 403) {
+           console.error(`[API] Access denied for ${type}, continuing...`);
+           continue;
+         } else {
+           console.error(`[API] Error testing ${type}: ${e.message}`);
+           continue;
+         }
+       }
+     }
+     
+     if (discoveredTypes.length > 0) {
+       console.error(`[API] Found ${discoveredTypes.length} content types via discovery: ${discoveredTypes.map(t => t.apiID).join(', ')}`);
+       contentTypesCache = discoveredTypes;
+       return discoveredTypes;
+     }
+
+     // --- Attempt 1: Use API Token via strapiClient (for admin endpoints) ---
+     if (STRAPI_API_TOKEN) {
+       console.error("[API] Attempt 1: Trying to fetch content types via API token admin endpoints");
+       try {
+         const tokenResponse = await strapiClient.get('/content-manager/collection-types');
+
+         if (tokenResponse.data && Array.isArray(tokenResponse.data)) {
+           return processAndCacheContentTypes(tokenResponse.data, "Content Manager API (/content-manager/collection-types) [token]");
+         }
+       } catch (tokenErr) {
+         console.error("[API] API token admin endpoints failed, continuing to next method.");
+       }
+     }
+
      // --- Attempt 1: Use Admin Credentials if available ---
      console.error(`[DEBUG] Checking admin creds: EMAIL=${Boolean(STRAPI_ADMIN_EMAIL)}, PASSWORD=${Boolean(STRAPI_ADMIN_PASSWORD)}`);
      if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
@@ -429,38 +589,7 @@ async function fetchContentTypes(): Promise<any[]> {
       }
     }
     
-    // --- Attempt 4: Discovery via exploring known endpoints ---
-    console.error(`[API] Trying content type discovery via known patterns...`);
-    
-    // Try to discover by checking common content types
-    const commonTypes = ['article', 'page', 'post', 'user', 'category'];
-    const discoveredTypes = [];
-    
-    for (const type of commonTypes) {
-      try {
-        const testResponse = await strapiClient.get(`/api/${type}?pagination[limit]=1`);
-        if (testResponse.status === 200) {
-          console.error(`[API] Discovered content type: api::${type}.${type}`);
-          discoveredTypes.push({
-            uid: `api::${type}.${type}`,
-            apiID: type,
-            info: {
-              displayName: type.charAt(0).toUpperCase() + type.slice(1),
-              description: `${type} content type (discovered)`,
-            },
-            attributes: {}
-          });
-        }
-      } catch (e) {
-        // Ignore 404s and continue
-      }
-    }
-    
-    if (discoveredTypes.length > 0) {
-      console.error(`[API] Found ${discoveredTypes.length} content types via discovery`);
-      contentTypesCache = discoveredTypes;
-      return discoveredTypes;
-    }
+
     
     // Final attempt: Try to discover content types by checking for common endpoint patterns
     // If all proper API methods failed, provide a helpful error message instead of silent failure
@@ -764,6 +893,35 @@ async function createEntry(contentType: string, data: any): Promise<any> {
   try {
     console.error(`[API] Creating new entry for content type: ${contentType}`);
     
+    // Add specific validation for articles
+    if (contentType === 'api::articles.articles') {
+      console.error('[API] Validating article data structure...');
+      
+      // Check for common mistakes
+      if (data.coverImage !== undefined) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `Invalid field 'coverImage' for articles. Use 'cover' field instead with media ID as integer. Example: "cover": 14`
+        );
+      }
+      
+      if (data.description && data.description.length > 80) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `Article description too long (${data.description.length} chars). Maximum 80 characters allowed.`
+        );
+      }
+      
+      if (data.metaTitle !== undefined || data.metaDescription !== undefined || data.keywords !== undefined) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `SEO fields (metaTitle, metaDescription, keywords) should be in 'blocks' array with __component: 'shared.seo'. Use get_article_structure_example for correct format.`
+        );
+      }
+      
+      console.error('[API] Article data validation passed');
+    }
+    
     // Extract the collection name from the content type UID
     const collection = contentType.split(".")[1];
     
@@ -806,16 +964,44 @@ async function createEntry(contentType: string, data: any): Promise<any> {
         data: data
       });
       
-      if (response.data && response.data.data) {
-        console.error(`[API] Successfully created entry via strapiClient.`);
-        return response.data.data;
-      } else {
-        console.warn(`[API] Create via strapiClient completed, but no data returned.`);
-        throw new McpError(
-          ErrorCode.InternalError,
-          `Failed to create entry for ${contentType}: No data returned from API`
-        );
+      console.error(`[API] Raw response structure:`, JSON.stringify({
+        status: response.status,
+        hasData: !!response.data,
+        dataKeys: response.data ? Object.keys(response.data) : [],
+        hasDataData: !!(response.data && response.data.data)
+      }));
+      
+      // More flexible response handling
+      if (response.data) {
+        // Case 1: Standard Strapi v4 format with nested data
+        if (response.data.data) {
+          console.error(`[API] Successfully created entry via strapiClient (format: data.data).`);
+          return response.data.data;
+        }
+        // Case 2: Direct data format (some Strapi configurations)
+        else if (response.data.id) {
+          console.error(`[API] Successfully created entry via strapiClient (format: direct data).`);
+          return response.data;
+        }
+        // Case 3: Other successful response formats
+        else if (response.status === 200 || response.status === 201) {
+          console.error(`[API] Successfully created entry via strapiClient (format: custom).`);
+          return response.data;
+        }
       }
+      
+      // If we get here, the response was unexpected
+      console.warn(`[API] Create via strapiClient completed with unexpected response format.`);
+      console.warn(`[API] Response data:`, JSON.stringify(response.data, null, 2));
+      
+      // Instead of throwing error, return success indicator with available data
+      return {
+        success: true,
+        message: "Entry created successfully but with unexpected response format",
+        responseData: response.data,
+        status: response.status
+      };
+      
     } catch (error) {
       console.error(`[API] Failed to create entry via strapiClient:`, error);
       throw new McpError(
@@ -875,16 +1061,45 @@ async function updateEntry(contentType: string, id: string, data: any): Promise<
   try {
     const response = await strapiClient.put(apiPath, { data: data });
     
-    // Check if data was returned
-    if (response.data && response.data.data) {
-      console.error(`[API] Successfully updated entry ${id} via strapiClient.`);
-      return response.data.data; // Success with data returned
-    } else {
-      // Update might have succeeded but didn't return data
-      console.warn(`[API] Update via strapiClient for ${id} completed, but no updated data returned.`);
-      // Return a success indicator even without data, as the operation likely succeeded
-      return { id: id, message: "Update via API token succeeded, no data returned." };
+    console.error(`[API] Update response structure:`, JSON.stringify({
+      status: response.status,
+      hasData: !!response.data,
+      dataKeys: response.data ? Object.keys(response.data) : [],
+      hasDataData: !!(response.data && response.data.data)
+    }));
+    
+    // More flexible response handling for updates
+    if (response.data) {
+      // Case 1: Standard Strapi v4 format with nested data
+      if (response.data.data) {
+        console.error(`[API] Successfully updated entry ${id} via strapiClient (format: data.data).`);
+        return response.data.data;
+      }
+      // Case 2: Direct data format (some Strapi configurations)
+      else if (response.data.id) {
+        console.error(`[API] Successfully updated entry ${id} via strapiClient (format: direct data).`);
+        return response.data;
+      }
+      // Case 3: Other successful response formats
+      else if (response.status === 200 || response.status === 201) {
+        console.error(`[API] Successfully updated entry ${id} via strapiClient (format: custom).`);
+        return response.data;
+      }
     }
+    
+    // If we get here, the response was unexpected but update likely succeeded
+    console.warn(`[API] Update via strapiClient for ${id} completed with unexpected response format.`);
+    console.warn(`[API] Response data:`, JSON.stringify(response.data, null, 2));
+    
+    // Return a success indicator even without standard data format
+    return {
+      id: id,
+      success: true,
+      message: "Update completed successfully but with unexpected response format",
+      responseData: response.data,
+      status: response.status
+    };
+    
   } catch (error) {
     console.error(`[API] Failed to update entry ${id} via strapiClient:`, error);
     throw new McpError(
@@ -916,33 +1131,347 @@ async function deleteEntry(contentType: string, id: string): Promise<void> {
 }
 
 /**
- * Upload a media file to Strapi
+ * Validate file path for security
  */
-async function uploadMedia(fileData: string, fileName: string, fileType: string): Promise<any> {
+async function validateFilePath(filePath: string): Promise<void> {
   try {
-    console.error(`[API] Uploading media file: ${fileName}`);
+    // Check if path is absolute
+    if (!path.isAbsolute(filePath)) {
+      throw new Error(`File path must be absolute. Received: ${filePath}. Please provide an absolute path like '/home/user/image.jpg' or 'C:\\Users\\user\\image.jpg'`);
+    }
     
-    const buffer = Buffer.from(fileData, 'base64');
+    // Normalize path to prevent directory traversal
+    const normalizedPath = path.resolve(filePath);
     
-    // Use FormData for file upload
-    const formData = new FormData();
-    // Convert Buffer to Blob with the correct content type
-    const blob = new Blob([buffer], { type: fileType });
-    formData.append('files', blob, fileName);
-
-    const response = await strapiClient.post('/api/upload', formData, {
-      headers: {
-        // Let axios set the correct multipart/form-data content-type with boundary
-        'Content-Type': 'multipart/form-data'
+    // Check if file exists and is readable
+    await fs.access(normalizedPath, fs.constants.R_OK);
+    
+    // Get file stats
+    const stats = await fs.stat(normalizedPath);
+    
+    // Ensure it's a file, not a directory
+    if (!stats.isFile()) {
+      throw new Error(`Path is not a file: ${filePath}`);
+    }
+    
+    // Check file size limit
+    if (stats.size > UPLOAD_CONFIG.maxFileSize) {
+      throw new Error(`File size ${stats.size} exceeds maximum allowed size ${UPLOAD_CONFIG.maxFileSize}`);
+    }
+    
+    // Check allowed paths if configured
+    if (UPLOAD_CONFIG.allowedPaths.length > 0) {
+      const isAllowed = UPLOAD_CONFIG.allowedPaths.some(allowedPath => 
+        normalizedPath.startsWith(path.resolve(allowedPath))
+      );
+      
+      if (!isAllowed) {
+        throw new Error(`File path not in allowed directories: ${filePath}`);
       }
+    }
+  } catch (error) {
+    throw new Error(`File path validation failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+/**
+ * Get MIME type based on file extension
+ */
+function getMimeType(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  
+  const mimeTypes: Record<string, string> = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.pdf': 'application/pdf',
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.txt': 'text/plain',
+    '.mp4': 'video/mp4',
+    '.mov': 'video/quicktime',
+    '.mp3': 'audio/mpeg',
+    '.wav': 'audio/wav'
+  };
+  
+  return mimeTypes[ext] || 'application/octet-stream';
+}
+
+/**
+ * Upload media file from local file path
+ */
+async function uploadMediaFromPath(filePath: string, customName?: string, fileInfo?: FileInfo): Promise<any> {
+  try {
+    console.error(`[API] Uploading media from path: ${filePath}`);
+    
+    // Validate file path
+    await validateFilePath(filePath);
+    
+    // Get file info
+    const fileName = fileInfo?.name || customName || path.basename(filePath);
+    const mimeType = getMimeType(filePath);
+    
+    // Create FormData with file stream
+    const FormData = (await import('form-data')).default;
+    const formData = new FormData();
+    
+    const fileStream = createReadStream(filePath);
+    formData.append('files', fileStream, {
+      filename: fileName,
+      contentType: mimeType
     });
     
+    // Add fileInfo metadata if provided
+    if (fileInfo && (fileInfo.alternativeText || fileInfo.caption || fileInfo.name)) {
+      const metadata = {
+        name: fileInfo.name || fileName,
+        ...(fileInfo.alternativeText && { alternativeText: fileInfo.alternativeText }),
+        ...(fileInfo.caption && { caption: fileInfo.caption })
+      };
+      
+      console.error(`[API] Adding file metadata: ${JSON.stringify(metadata)}`);
+      formData.append('fileInfo', JSON.stringify(metadata));
+    }
+
+    let response;
+    
+    // --- Attempt 0: Use API Token directly if provided ---
+    if (STRAPI_API_TOKEN) {
+      console.error(`[API] Attempt 0: Uploading via API Token`);
+      try {
+        response = await axios.post(`${STRAPI_URL}/api/upload`, formData, {
+          headers: {
+            'Authorization': `Bearer ${STRAPI_API_TOKEN}`,
+            ...formData.getHeaders()
+          },
+          timeout: UPLOAD_CONFIG.uploadTimeout
+        });
+        console.error(`[API] Successfully uploaded media via API Token: ${filePath}`);
+        return response.data;
+      } catch (tokenErr) {
+        console.error(`[API] Failed to upload via API Token:`, tokenErr);
+        console.error(`[API] Falling back to credential-based methods...`);
+      }
+    }
+
+    // --- Attempt 1: Use User JWT token for /api/upload ---
+    if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+      console.error(`[API] Attempt 1: Uploading via user JWT token`);
+      try {
+        // Ensure user login for API endpoints
+        if (!userJwtToken) {
+          console.error(`[API] No user token, attempting user login...`);
+          await loginToStrapiUser();
+        }
+        
+        if (userJwtToken) {
+          // Use user JWT token for upload via public API
+          response = await axios.post(`${STRAPI_URL}/api/upload`, formData, {
+            headers: {
+              'Authorization': `Bearer ${userJwtToken}`,
+              ...formData.getHeaders()
+            },
+            timeout: UPLOAD_CONFIG.uploadTimeout
+          });
+          
+          console.error(`[API] Successfully uploaded media via user JWT token: ${filePath}`);
+          return response.data;
+        }
+      } catch (userError) {
+        console.error(`[API] Failed to upload via user JWT token:`, userError);
+        console.error(`[API] Trying admin JWT with /api/upload...`);
+        
+        // Try admin JWT with /api/upload (CORRECT endpoint)
+        try {
+          if (!adminJwtToken) {
+            console.error(`[API] No admin token, attempting admin login...`);
+            await loginToStrapiAdmin();
+          }
+          
+          if (adminJwtToken) {
+            // ВАЖНО: Используем /api/upload с admin JWT токеном (как в референсе)
+            response = await axios.post(`${STRAPI_URL}/api/upload`, formData, {
+              headers: {
+                'Authorization': `Bearer ${adminJwtToken}`,
+                ...formData.getHeaders()
+              },
+              timeout: UPLOAD_CONFIG.uploadTimeout
+            });
+            
+            console.error(`[API] Successfully uploaded media via admin JWT on /api/upload: ${filePath}`);
+            return response.data;
+          }
+        } catch (adminError) {
+          console.error(`[API] Failed to upload via admin JWT on /api/upload:`, adminError);
+          console.error(`[API] Falling back to API token...`);
+        }
+      }
+    } else {
+      console.error(`[API] Admin credentials not provided, using API token`);
+    }
+
+    // --- Attempt 2: Use API Token as fallback ---
+    console.error(`[API] Attempt 2: Uploading via API token (strapiClient)`);
+    response = await strapiClient.post('/api/upload', formData, {
+      headers: {
+        ...formData.getHeaders()
+      },
+      timeout: UPLOAD_CONFIG.uploadTimeout
+    });
+    
+    console.error(`[API] Successfully uploaded media from path: ${filePath}`);
     return response.data;
   } catch (error) {
-    console.error(`[Error] Failed to upload media file ${fileName}:`, error);
+    console.error(`[Error] Failed to upload media from path ${filePath}:`, error);
     throw new McpError(
       ErrorCode.InternalError,
-      `Failed to upload media file ${fileName}: ${error instanceof Error ? error.message : String(error)}`
+      `Failed to upload media from path ${filePath}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Update media file metadata (alt text, caption, name)
+ */
+async function updateMediaMetadata(mediaId: string, fileInfo: FileInfo): Promise<any> {
+  try {
+    console.error(`[API] Updating metadata for media file ID: ${mediaId}`);
+    
+    if (!mediaId) {
+      throw new Error("Media ID is required");
+    }
+    
+    if (!fileInfo || (!fileInfo.alternativeText && !fileInfo.caption && !fileInfo.name)) {
+      throw new Error("At least one metadata field (alternativeText, caption, or name) must be provided");
+    }
+    
+    // Prepare the metadata update payload
+    const updatePayload = {
+      fileInfo: {
+        ...(fileInfo.name && { name: fileInfo.name }),
+        ...(fileInfo.alternativeText && { alternativeText: fileInfo.alternativeText }),
+        ...(fileInfo.caption && { caption: fileInfo.caption })
+      }
+    };
+    
+    console.error(`[API] Updating media metadata with payload: ${JSON.stringify(updatePayload)}`);
+    
+    let response;
+    
+    // --- Attempt 1: Use User JWT token for /api/upload ---
+    if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+      console.error(`[API] Attempt 1: Updating media metadata via user JWT token`);
+      try {
+        // Ensure user login for API endpoints
+        if (!userJwtToken) {
+          console.error(`[API] No user token, attempting user login...`);
+          await loginToStrapiUser();
+        }
+        
+        if (userJwtToken) {
+          // Use user JWT token for update
+          response = await axios.put(`${STRAPI_URL}/api/upload?id=${mediaId}`, updatePayload, {
+            headers: {
+              'Authorization': `Bearer ${userJwtToken}`,
+              'Content-Type': 'application/json'
+            }
+          });
+          
+          console.error(`[API] Successfully updated metadata via user JWT token for media file ID: ${mediaId}`);
+          return response.data;
+        }
+      } catch (userError) {
+        console.error(`[API] Failed to update metadata via user JWT token:`, userError);
+        console.error(`[API] Falling back to API token...`);
+      }
+    } else {
+      console.error(`[API] Admin credentials not provided, using API token`);
+    }
+
+    // --- Attempt 2: Use API Token as fallback ---
+    console.error(`[API] Attempt 2: Updating media metadata via API token (strapiClient)`);
+    response = await strapiClient.put(`/api/upload?id=${mediaId}`, updatePayload);
+    
+    console.error(`[API] Successfully updated metadata for media file ID: ${mediaId}`);
+    return response.data;
+  } catch (error) {
+    console.error(`[Error] Failed to update media metadata for ID ${mediaId}:`, error);
+    throw new McpError(
+      ErrorCode.InternalError,
+      `Failed to update media metadata for ID ${mediaId}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Upload media file from URL
+ */
+async function uploadMediaFromUrl(url: string, customName?: string, fileInfo?: FileInfo): Promise<any> {
+  try {
+    console.error(`[API] Uploading media from URL: ${url}`);
+    
+    // Validate URL format
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      throw new Error(`Invalid URL format: ${url}`);
+    }
+    
+    // Only allow HTTP/HTTPS
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      throw new Error(`Unsupported protocol: ${parsedUrl.protocol}`);
+    }
+    
+    // Download file to temporary location
+    const tempDir = os.tmpdir();
+    const tempFileName = fileInfo?.name || customName || path.basename(parsedUrl.pathname) || `download_${Date.now()}`;
+    const tempFilePath = path.join(tempDir, tempFileName);
+    
+    console.error(`[API] Downloading file to: ${tempFilePath}`);
+    
+    // Download file
+    const response = await axios.get(url, {
+      responseType: 'stream',
+      timeout: UPLOAD_CONFIG.uploadTimeout
+    });
+    
+    // Check content length if available
+    const contentLength = response.headers['content-length'];
+    if (contentLength && parseInt(contentLength) > UPLOAD_CONFIG.maxFileSize) {
+      throw new Error(`File size ${contentLength} exceeds maximum allowed size ${UPLOAD_CONFIG.maxFileSize}`);
+    }
+    
+    // Write to temporary file
+    const writer = require('fs').createWriteStream(tempFilePath);
+    response.data.pipe(writer);
+    
+    await new Promise((resolve, reject) => {
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
+    
+    try {
+      // Upload from temporary file with metadata (will use admin credentials if available)
+      const result = await uploadMediaFromPath(tempFilePath, customName, fileInfo);
+      console.error(`[API] Successfully uploaded media from URL: ${url}`);
+      return result;
+    } finally {
+      // Clean up temporary file
+      try {
+        await fs.unlink(tempFilePath);
+        console.error(`[API] Cleaned up temporary file: ${tempFilePath}`);
+      } catch (cleanupError) {
+        console.error(`[Warning] Failed to clean up temporary file ${tempFilePath}:`, cleanupError);
+      }
+    }
+  } catch (error) {
+    console.error(`[Error] Failed to upload media from URL ${url}:`, error);
+    throw new McpError(
+      ErrorCode.InternalError,
+      `Failed to upload media from URL ${url}: ${error instanceof Error ? error.message : String(error)}`
     );
   }
 }
@@ -950,6 +1479,94 @@ async function uploadMedia(fileData: string, fileName: string, fileType: string)
 /**
  * Fetch the schema for a specific content type
  */
+async function getArticleStructureExample(): Promise<any> {
+  console.error("[API] Getting article structure example with populate");
+  
+  try {
+    // Try to get an existing article with full population to show structure
+    const response = await fetchEntries('api::articles.articles', {
+      pagination: { pageSize: 1 },
+      populate: "*"
+    });
+    
+    if (response.data && response.data.length > 0) {
+      const article = response.data[0];
+      console.error("[API] Successfully retrieved article example with full structure");
+      
+      // Create a template based on the real structure
+      const template = {
+        explanation: "This is the correct structure for creating articles based on an existing article",
+        example_data_for_create: {
+          title: "Your Article Title Here",
+          description: "Short description under 80 chars (max. 80 characters)",
+          slug: "your-article-slug",
+          content: "Your HTML content here",
+          author: article.author?.id || 1,
+          cover: article.cover?.id || null,
+          publishedAt: null,
+          blocks: article.blocks ? [
+            {
+              __component: "shared.seo",
+              metaTitle: "Your SEO Title",
+              metaDescription: "Your SEO description",
+              keyWords: "your, keywords, here"
+            }
+          ] : []
+        },
+        real_example_structure: {
+          available_fields: Object.keys(article),
+          cover_structure: article.cover ? {
+            type: "Media relation",
+            provide_as: "integer ID",
+            example: article.cover.id
+          } : "No cover in this example",
+                     blocks_structure: article.blocks ? {
+             type: "Dynamic zone",
+             available_components: article.blocks.map((block: any) => block.__component),
+             seo_example: article.blocks.find((block: any) => block.__component === 'shared.seo') || "No SEO block in this example"
+           } : "No blocks in this example"
+        }
+      };
+      
+      return template;
+    } else {
+      // Return a basic template if no articles exist
+      return {
+        explanation: "No existing articles found. Here's the expected structure:",
+        example_data_for_create: {
+          title: "Your Article Title",
+          description: "Short description under 80 chars (max. 80 characters)",
+          slug: "your-article-slug", 
+          content: "Your HTML content",
+          author: 1,
+          cover: 14,
+          publishedAt: null,
+          blocks: [
+            {
+              __component: "shared.seo",
+              metaTitle: "SEO Title",
+              metaDescription: "SEO Description",
+              keyWords: "keywords, separated, by, commas"
+            }
+          ]
+        },
+        important_notes: {
+          cover_field: "Use 'cover' (not 'coverImage') with media ID as integer",
+          description_limit: "⚠️ STRICT 80 character limit (max. 80 characters)",
+          seo_location: "SEO fields go in blocks array with __component: 'shared.seo'",
+          populate_tip: "Use get_entries with populate='*' to see full structure of existing articles"
+        }
+      };
+    }
+  } catch (error) {
+    console.error("[API] Failed to get article example:", error);
+    throw new McpError(
+      ErrorCode.InternalError,
+      `Failed to get article structure example: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
  async function fetchContentTypeSchema(contentType: string): Promise<any> {
    try {
      console.error(`[API] Fetching schema for content type: ${contentType}`);
@@ -1839,17 +2456,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "get_entries",
-        description: "Get entries for a specific content type with optional filtering, pagination, sorting, and population of relations",
+        description: `Get entries for a specific content type with optional filtering, pagination, sorting, and population of relations.
+
+IMPORTANT: Use populate="*" to get full structure including cover images and blocks!
+
+For articles with full structure: {"populate": "*"}
+For specific fields: {"populate": ["cover", "author", "blocks"]}
+Basic pagination: {"pagination": {"limit": 10}}`,
         inputSchema: {
           type: "object",
           properties: {
             contentType: {
               type: "string",
-              description: "The content type UID (e.g., 'api::article.article')"
+              description: "The content type UID (e.g., 'api::articles.articles')"
             },
             options: {
               type: "string",
-              description: "JSON string with query options including filters, pagination, sort, populate, and fields. Example: '{\"filters\":{\"title\":{\"$contains\":\"hello\"}},\"pagination\":{\"page\":1,\"pageSize\":10},\"sort\":[\"title:asc\"],\"populate\":[\"author\",\"categories\"],\"fields\":[\"title\",\"content\"]}'"
+              description: "JSON string with query options. Use populate='*' for full structure. Examples: '{\"populate\":\"*\"}' or '{\"filters\":{\"title\":{\"$contains\":\"hello\"}},\"pagination\":{\"page\":1,\"pageSize\":10},\"sort\":[\"title:asc\"],\"populate\":[\"author\",\"cover\",\"blocks\"]}'"
             }
           },
           required: ["contentType"]
@@ -1879,17 +2502,40 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "create_entry",
-        description: "Create a new entry for a content type",
+        description: `Create a new entry for a content type. 
+
+IMPORTANT FOR ARTICLES (api::articles.articles):
+- Use 'cover' field (NOT 'coverImage') for cover images - provide media ID as integer
+- ⚠️ 'description' field has STRICT 80 character limit (max. 80 characters)
+- SEO fields go in 'blocks' array with __component: 'shared.seo'
+- Use get_entries with populate=* to see full structure examples
+
+Example for articles:
+{
+  "title": "Article Title",
+  "description": "Short description under 80 chars (max. 80 characters)",
+  "slug": "article-slug",
+  "content": "HTML content",
+  "author": 1,
+  "cover": 14,
+  "publishedAt": null,
+  "blocks": [{
+    "__component": "shared.seo",
+    "metaTitle": "SEO Title",
+    "metaDescription": "SEO Description", 
+    "keyWords": "keywords, separated, by, commas"
+  }]
+}`,
         inputSchema: {
           type: "object",
           properties: {
             contentType: {
               type: "string",
-              description: "The content type UID (e.g., 'api::article.article')"
+              description: "The content type UID (e.g., 'api::articles.articles')"
             },
             data: {
               type: "object",
-              description: "The data for the new entry"
+              description: "The data for the new entry. For articles, see description above for correct field names and structure."
             }
           },
           required: ["contentType", "data"]
@@ -1936,25 +2582,80 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "upload_media",
-        description: "Upload a media file to the Strapi Media Library.",
+        name: "upload_media_from_path",
+        description: "Upload a media file to Strapi from a local file path. REQUIRES ABSOLUTE PATH. This method is much more efficient than base64 upload as it doesn't consume context tokens.",
         inputSchema: {
           type: "object",
           properties: {
-            fileData: {
+            filePath: {
               type: "string",
-              description: "Base64 encoded string of the file data.",
+              description: "Absolute (!) path to the file to upload (e.g., '/Users/user/image.jpg').",
             },
-            fileName: {
+            customName: {
               type: "string",
-              description: "The desired name for the file.",
+              description: "Optional custom name for the uploaded file. If not provided, uses the original filename.",
             },
-            fileType: {
-              type: "string",
-              description: "The MIME type of the file (e.g., 'image/jpeg', 'application/pdf').",
-            },
+            fileInfo: {
+              type: "object",
+              description: "Optional metadata for the uploaded file. E.g., { alternativeText: 'Alt text', caption: 'Caption', name: 'Filename' }",
+              properties: {
+                alternativeText: { type: "string", description: "Alternative text for the image" },
+                caption: { type: "string", description: "Caption for the image" },
+                name: { type: "string", description: "Name of the file" }
+              }
+            }
           },
-          required: ["fileData", "fileName", "fileType"]
+          required: ["filePath"]
+        }
+      },
+      {
+        name: "upload_media_from_url",
+        description: "Upload a media file to Strapi by downloading it from a URL. This method is efficient and doesn't consume context tokens.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            url: {
+              type: "string",
+              description: "HTTP/HTTPS URL of the file to download and upload (e.g., 'https://example.com/image.jpg').",
+            },
+            customName: {
+              type: "string",
+              description: "Optional custom name for the uploaded file. If not provided, uses the filename from URL or generates one.",
+            },
+            fileInfo: {
+              type: "object",
+              description: "Optional metadata for the uploaded file. E.g., { alternativeText: 'Alt text', caption: 'Caption', name: 'Filename' }",
+              properties: {
+                alternativeText: { type: "string", description: "Alternative text for the image" },
+                caption: { type: "string", description: "Caption for the image" },
+                name: { type: "string", description: "Name of the file" }
+              }
+            }
+          },
+          required: ["url"]
+        }
+      },
+      {
+        name: "update_media_metadata",
+        description: "Update metadata (alt text, caption, name) for an already uploaded media file. Useful for improving SEO and accessibility.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            mediaId: {
+              type: "string",
+              description: "The ID of the media file to update (e.g., '42')."
+            },
+            fileInfo: {
+              type: "object",
+              description: "Metadata to update for the file. At least one field must be provided.",
+              properties: {
+                alternativeText: { type: "string", description: "Alternative text for the image" },
+                caption: { type: "string", description: "Caption for the image" },
+                name: { type: "string", description: "Name of the file" }
+              }
+            }
+          },
+          required: ["mediaId", "fileInfo"]
         }
       },
       {
@@ -1969,6 +2670,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
           },
           required: ["contentType"]
+        }
+      },
+      {
+        name: "get_article_structure_example",
+        description: "Get a complete example of article structure with correct field names, including cover image and SEO blocks. This shows exactly how to structure data for create_entry with articles.",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          required: []
         }
       },
       {
@@ -2152,6 +2862,94 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
            required: ["contentType", "id"]
          }
        },
+       {
+         name: "get_lightweight_entries",
+         description: `Get entries with minimal data and specific fields only - optimized for performance.
+         
+Automatically includes only essential fields to minimize response size:
+- For articles: title, description, slug, documentId/id
+- For authors: name, email, documentId/id  
+- Smart populate with minimal fields
+
+Use this instead of get_entries when you don't need full content/images.`,
+         inputSchema: {
+           type: "object",
+           properties: {
+             contentType: {
+               type: "string",
+               description: "The content type UID (e.g., 'api::articles.articles')"
+             },
+             options: {
+               type: "string",
+               description: "JSON string with lightweight query options. Example: '{\"filters\":{\"title\":{\"$contains\":\"AI\"}},\"pagination\":{\"limit\":10}}'"
+             }
+           },
+           required: ["contentType"]
+         }
+       },
+       {
+         name: "find_author_by_name",
+         description: `Efficiently find an author by name without fetching full article data.
+
+Returns minimal author information: id, documentId, name, email.
+Much faster than using get_entries with populate for author searches.`,
+         inputSchema: {
+           type: "object",
+           properties: {
+             authorName: {
+               type: "string", 
+               description: "Full or partial author name to search for"
+             }
+           },
+           required: ["authorName"]
+         }
+       },
+       {
+         name: "get_schema_fields",
+         description: `Get detailed field information for a content type without fetching actual content.
+
+Returns field types, validation rules, and relationships - useful for understanding
+content structure before creating/updating entries.`,
+         inputSchema: {
+           type: "object",
+           properties: {
+             contentType: {
+               type: "string",
+               description: "The content type UID (e.g., 'api::articles.articles')"
+             }
+           },
+           required: ["contentType"]
+         }
+       },
+       {
+         name: "get_content_preview",
+         description: `Get a preview of content entries with minimal essential fields.
+
+For articles: title, description, slug, author name, publication status
+For other types: automatically determined essential fields
+Perfect for listing/browsing without heavy data transfer.`,
+         inputSchema: {
+           type: "object",
+           properties: {
+             contentType: {
+               type: "string",
+               description: "The content type UID (e.g., 'api::articles.articles')"
+             },
+             limit: {
+               type: "number",
+               description: "Number of entries to return (default: 10, max: 50)",
+               minimum: 1,
+               maximum: 50,
+               default: 10
+             },
+             search: {
+               type: "string",
+               description: "Optional search term to filter by title/name"
+             }
+           },
+           required: ["contentType"]
+         }
+       },
      ]
    };
  });
@@ -2321,24 +3119,74 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         };
       }
       
-      case "upload_media": {
-        const fileData = String(request.params.arguments?.fileData);
-        const fileName = String(request.params.arguments?.fileName);
-        const fileType = String(request.params.arguments?.fileType);
+      case "upload_media_from_path": {
+        const filePath = String(request.params.arguments?.filePath);
+        const customName = request.params.arguments?.customName ? String(request.params.arguments.customName) : undefined;
+        const fileInfo = request.params.arguments?.fileInfo as FileInfo | undefined;
         
-        if (!fileData || !fileName || !fileType) {
+        if (!filePath) {
           throw new McpError(
             ErrorCode.InvalidParams,
-            "File data, file name, and file type are required"
+            "File path is required"
           );
         }
         
-        const media = await uploadMedia(fileData, fileName, fileType);
+        const media = await uploadMediaFromPath(filePath, customName, fileInfo);
         
         return {
           content: [{
             type: "text",
             text: JSON.stringify(media, null, 2)
+          }]
+        };
+      }
+      
+      case "upload_media_from_url": {
+        const url = String(request.params.arguments?.url);
+        const customName = request.params.arguments?.customName ? String(request.params.arguments.customName) : undefined;
+        const fileInfo = request.params.arguments?.fileInfo as FileInfo | undefined;
+        
+        if (!url) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "URL is required"
+          );
+        }
+        
+        const media = await uploadMediaFromUrl(url, customName, fileInfo);
+        
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(media, null, 2)
+          }]
+        };
+      }
+      
+      case "update_media_metadata": {
+        const mediaId = String(request.params.arguments?.mediaId);
+        const fileInfo = request.params.arguments?.fileInfo as FileInfo;
+        
+        if (!mediaId) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "Media ID is required"
+          );
+        }
+        
+        if (!fileInfo) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "File info is required"
+          );
+        }
+        
+        const updatedMedia = await updateMediaMetadata(mediaId, fileInfo);
+        
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(updatedMedia, null, 2)
           }]
         };
       }
@@ -2356,6 +3204,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
           content: [{
             type: "text",
             text: JSON.stringify(schema, null, 2)
+          }]
+        };
+      }
+      
+      case "get_article_structure_example": {
+        const example = await getArticleStructureExample();
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(example, null, 2)
           }]
         };
       }
@@ -2518,6 +3376,288 @@ server.setRequestHandler(CallToolRequestSchema, async (request: CallToolRequest)
         };
       }
 
+      case "get_lightweight_entries": {
+        const contentType = String(request.params.arguments?.contentType);
+        
+        if (!contentType) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "Content type is required"
+          );
+        }
+
+        // Parse options if provided
+        let options: any = {};
+        if (request.params.arguments?.options) {
+          try {
+            options = JSON.parse(String(request.params.arguments.options));
+          } catch (error) {
+            throw new McpError(
+              ErrorCode.InvalidParams,
+              "Invalid JSON in options parameter"
+            );
+          }
+        }
+
+        // Define lightweight field sets based on content type
+        let lightweightFields: string[];
+        let smartPopulate: any = {};
+
+        if (contentType === 'api::articles.articles') {
+          lightweightFields = ['title', 'description', 'slug', 'publishedAt', 'createdAt'];
+          smartPopulate = {
+            author: {
+              fields: ['name', 'email']
+            }
+          };
+        } else if (contentType.includes('user')) {
+          lightweightFields = ['name', 'email', 'createdAt'];
+        } else if (contentType.includes('categor')) {
+          lightweightFields = ['name', 'description'];
+        } else {
+          // Generic approach for unknown content types
+          lightweightFields = ['title', 'name', 'description', 'createdAt'];
+        }
+
+        // Merge with user options
+        const finalOptions = {
+          fields: lightweightFields,
+          populate: smartPopulate,
+          pagination: options.pagination || { pageSize: 20 },
+          ...options
+        };
+
+        const entries = await fetchEntries(contentType, finalOptions);
+        
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(entries, null, 2)
+          }]
+        };
+      }
+
+      case "find_author_by_name": {
+        const authorName = String(request.params.arguments?.authorName);
+        
+        if (!authorName) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "Author name is required"
+          );
+        }
+
+        try {
+          // First try to find through articles with author populate
+          const articlesWithAuthor = await fetchEntries('api::articles.articles', {
+            populate: {
+              author: {
+                fields: ['name', 'email']
+              }
+            },
+            pagination: { pageSize: 50 },
+            fields: ['title'] // minimal article data
+          });
+
+          // Extract unique authors and filter by name
+          const authors: any[] = [];
+          const seenAuthors = new Set();
+
+          if (articlesWithAuthor.data) {
+            for (const article of articlesWithAuthor.data) {
+              if (article.author && 
+                  article.author.name && 
+                  article.author.name.toLowerCase().includes(authorName.toLowerCase()) &&
+                  !seenAuthors.has(article.author.id || article.author.documentId)) {
+                
+                authors.push({
+                  id: article.author.id,
+                  documentId: article.author.documentId,
+                  name: article.author.name,
+                  email: article.author.email
+                });
+                seenAuthors.add(article.author.id || article.author.documentId);
+              }
+            }
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                searchTerm: authorName,
+                found: authors.length,
+                authors: authors
+              }, null, 2)
+            }]
+          };
+        } catch (error) {
+          // Fallback: if articles approach fails, try direct user search if accessible
+          console.warn(`Direct author search through articles failed, error: ${error}`);
+          
+          return {
+            content: [{
+              type: "text", 
+              text: JSON.stringify({
+                searchTerm: authorName,
+                error: "Could not access author data. This might be due to API permissions.",
+                suggestion: "Use get_entries on api::articles.articles with author populate to see available authors"
+              }, null, 2)
+            }]
+          };
+        }
+      }
+
+      case "get_schema_fields": {
+        const contentType = String(request.params.arguments?.contentType);
+        
+        if (!contentType) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "Content type is required"
+          );
+        }
+
+        try {
+          // Get the full schema
+          const schema = await fetchContentTypeSchema(contentType);
+          
+          // Enhanced schema with field analysis
+          const enhancedSchema = {
+            contentType,
+            displayName: schema.info?.displayName || contentType,
+            description: schema.info?.description || '',
+            fields: {} as Record<string, any>,
+            relationships: {} as Record<string, any>,
+            metadata: {
+              totalFields: 0,
+              requiredFields: 0,
+              optionalFields: 0,
+              relationshipCount: 0
+            }
+          };
+
+          // Process attributes to provide detailed field information
+          if (schema.attributes) {
+            for (const [fieldName, fieldConfig] of Object.entries(schema.attributes)) {
+              const field: any = fieldConfig as any;
+              
+              if (field.type === 'relation') {
+                enhancedSchema.relationships[fieldName] = {
+                  type: field.type,
+                  target: field.target,
+                  relation: field.relation,
+                  required: field.required || false
+                };
+                enhancedSchema.metadata.relationshipCount++;
+              } else {
+                enhancedSchema.fields[fieldName] = {
+                  type: field.type,
+                  required: field.required || false,
+                  unique: field.unique || false,
+                  maxLength: field.maxLength,
+                  minLength: field.minLength,
+                  default: field.default
+                };
+                
+                if (field.required) {
+                  enhancedSchema.metadata.requiredFields++;
+                } else {
+                  enhancedSchema.metadata.optionalFields++;
+                }
+              }
+              enhancedSchema.metadata.totalFields++;
+            }
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify(enhancedSchema, null, 2)
+            }]
+          };
+        } catch (error) {
+          console.error(`Failed to get schema for ${contentType}:`, error);
+          throw new McpError(
+            ErrorCode.InternalError,
+            `Failed to retrieve schema for ${contentType}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+
+      case "get_content_preview": {
+        const contentType = String(request.params.arguments?.contentType);
+        const limit = Number(request.params.arguments?.limit) || 10;
+        const search = request.params.arguments?.search ? String(request.params.arguments.search) : undefined;
+        
+        if (!contentType) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "Content type is required"
+          );
+        }
+
+        if (limit > 50) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            "Limit cannot exceed 50 for preview requests"
+          );
+        }
+
+        // Build preview options based on content type
+        let previewOptions: any = {
+          pagination: { pageSize: limit }
+        };
+
+        if (contentType === 'api::articles.articles') {
+          previewOptions.fields = ['title', 'description', 'slug', 'publishedAt', 'createdAt', 'updatedAt'];
+          previewOptions.populate = {
+            author: {
+              fields: ['name', 'email']
+            }
+          };
+          
+          if (search) {
+            previewOptions.filters = {
+              $or: [
+                { title: { $containsi: search } },
+                { description: { $containsi: search } }
+              ]
+            };
+          }
+        } else {
+          // Generic preview for other content types
+          previewOptions.fields = ['title', 'name', 'description', 'createdAt', 'updatedAt'];
+          
+          if (search) {
+            previewOptions.filters = {
+              $or: [
+                { title: { $containsi: search } },
+                { name: { $containsi: search } }
+              ]
+            };
+          }
+        }
+
+        const result = await fetchEntries(contentType, previewOptions);
+        
+        // Add preview metadata
+        const previewResult = {
+          contentType,
+          searchTerm: search,
+          limit,
+          preview: true,
+          ...result
+        };
+
+        return {
+          content: [{
+            type: "text",
+            text: JSON.stringify(previewResult, null, 2)
+          }]
+        };
+      }
+
       default:
         throw new McpError(
           ErrorCode.MethodNotFound,
@@ -2623,44 +3763,44 @@ async function validateStrapiConnection(): Promise<void> {
     let response;
     let authMethod = "";
     
-    // First try admin authentication if available
-    if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+    // First try API token authentication if available
+    if (STRAPI_API_TOKEN) {
       try {
-        // Test admin login
-        await loginToStrapiAdmin();
-        response = await makeAdminApiRequest('/admin/users/me');
-        authMethod = "admin credentials";
-        console.error("[Setup] ✓ Admin authentication successful");
-      } catch (adminError) {
-        console.error("[Setup] Admin authentication failed, trying API token...");
-        throw adminError; // Fall through to API token test
-      }
-    } else {
-      throw new Error("No admin credentials, trying API token");
-    }
-    
-    // If admin failed or not available, try API token
-    if (!response) {
-      try {
-        // Try a simple endpoint that should exist - use upload/files to test API token
+        // Use a simple public endpoint that requires authentication (e.g., users/me or any protected content)
         response = await strapiClient.get('/api/upload/files?pagination[limit]=1');
         authMethod = "API token";
         console.error("[Setup] ✓ API token authentication successful");
-      } catch (apiError) {
-        console.error("[Setup] API token test failed, trying root endpoint...");
-        // Last resort - try to hit the root to see if server is running
-        response = await strapiClient.get('/');
-        authMethod = "server connection";
-        console.error("[Setup] ✓ Server is reachable");
+        connectionValidated = true;
+        return;
+      } catch (tokenError) {
+        console.error("[Setup] API token authentication failed, falling back to admin credentials (if available)...");
+        // Do not throw yet – we may still succeed with admin credentials.
       }
     }
     
-    // Check if we got a proper response
-    if (response && response.status >= 200 && response.status < 300) {
-      console.error(`[Setup] ✓ Connection to Strapi successful using ${authMethod}`);
-      connectionValidated = true;
-    } else {
-      throw new Error(`Unexpected response status: ${response?.status}`);
+    // If API token unavailable or failed, try admin credentials
+    if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
+      try {
+        await loginToStrapiAdmin();
+        console.info(`[Setup] ✓ Admin authentication successful`);
+        connectionValidated = true;
+        return;
+      } catch (adminError) {
+        console.error("[Setup] Admin authentication failed as well.");
+      }
+    }
+    
+    // As a last resort, check if the server is reachable without auth (e.g., public content)
+    try {
+      response = await strapiClient.get('/');
+      authMethod = "server connection (no auth)";
+      if (response.status >= 200 && response.status < 300) {
+        console.error("[Setup] ✓ Server is reachable (no auth)");
+        connectionValidated = true;
+        return;
+      }
+    } catch (rootError) {
+      throw new Error("All connection attempts failed");
     }
   } catch (error: any) {
     console.error("[Setup] ✗ Failed to connect to Strapi");

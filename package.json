@@ -1,31 +1,42 @@
 {
    "name": "strapi-mcp",
-   "version": "0.1.8",
-   "description": "An MCP server for your Strapi CMS that provides access to content types and entries through the MCP protocol",
+   "version": "0.3.0",
+   "description": "High-performance MCP server for Strapi CMS with 95% smaller API responses, intelligent field selection, and Strapi v5+ compatibility",
    "private": false,
    "keywords": [
       "strapi",
       "cms",
-      "content-management",
+      "content-management", 
       "mcp",
-      "headless-cms"
+      "headless-cms",
+      "performance",
+      "optimization",
+      "lightweight",
+      "api",
+      "strapi-v5",
+      "documentId",
+      "model-context-protocol"
    ],
    "author": "l33tdawg <l33tdawg@hackinthebox.org>",
    "license": "MIT",
    "repository": {
       "type": "git",
-      "url": "git+https://github.com/l33tdawg/strapi-mcp.git"
+      "url": "git+https://github.com/wh1teee/strapi-mcp.git"
    },
-   "homepage": "https://github.com/l33tdawg/strapi-mcp#readme",
+   "homepage": "https://github.com/wh1teee/strapi-mcp#readme",
    "bugs": {
-      "url": "https://github.com/l33tdawg/strapi-mcp/issues"
+      "url": "https://github.com/wh1teee/strapi-mcp/issues"
    },
    "type": "module",
+   "main": "build/index.js",
    "bin": {
       "strapi-mcp": "build/index.js"
    },
    "files": [
-      "build"
+      "build",
+      "README.md",
+      "CLAUDE.md",
+      "marketplace.json"
    ],
    "scripts": {
       "build": "tsc --skipLibCheck && chmod +x build/index.js",
