@@ -1,6 +1,6 @@
 {
    "name": "strapi-mcp",
-   "version": "0.1.8",
+   "version": "0.3.0",
    "description": "An MCP server for your Strapi CMS that provides access to content types and entries through the MCP protocol",
    "private": false,
    "keywords": [
@@ -14,11 +14,11 @@
    "license": "MIT",
    "repository": {
       "type": "git",
-      "url": "git+https://github.com/l33tdawg/strapi-mcp.git"
+      "url": "git+https://github.com/wh1teee/strapi-mcp.git"
    },
-   "homepage": "https://github.com/l33tdawg/strapi-mcp#readme",
+   "homepage": "https://github.com/wh1teee/strapi-mcp#readme",
    "bugs": {
-      "url": "https://github.com/l33tdawg/strapi-mcp/issues"
+      "url": "https://github.com/wh1teee/strapi-mcp/issues"
    },
    "type": "module",
    "bin": {

@@ -1,9 +1,18 @@
 {
-  "name": "Strapi CMS",
-  "shortDescription": "Integrate with Strapi CMS to manage content types and entries",
-  "longDescription": "This MCP server integrates with Strapi CMS to provide access to content types and entries through the MCP protocol. It enables AI assistants to create, read, update, and delete content in your Strapi instance, with support for filtering, pagination, sorting, and media uploads.",
-  "iconUrl": "https://raw.githubusercontent.com/l33tdawg/strapi-mcp/main/icon.svg",
-  "categories": ["content-management", "cms", "database"],
+  "name": "strapi-mcp",
+  "displayName": "Strapi MCP Server",
+  "description": "High-performance Model Context Protocol server for Strapi CMS. Features 95% smaller API responses, intelligent field selection, fast author lookup, and comprehensive content management with Strapi v5+ compatibility.",
+  "iconUrl": "https://raw.githubusercontent.com/wh1teee/strapi-mcp/main/icon.png",
+  "version": "0.3.0",
+  "author": "wh1teee",
+  "homepage": "https://github.com/wh1teee/strapi-mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wh1teee/strapi-mcp.git"
+  },
+  "license": "MIT",
+  "keywords": ["strapi", "cms", "headless", "api", "mcp", "performance", "optimization", "lightweight", "v5", "media", "alt-text", "accessibility", "seo"],
+  "categories": ["Content Management", "API", "Database"],
   "tags": ["strapi", "headless-cms", "content-api"],
   "installInstructions": "See DEPLOYMENT.md for detailed installation instructions",
   "environmentVariables": [
@@ -25,24 +34,54 @@
   ],
   "examples": [
     {
-      "title": "List Content Types",
-      "description": "Get all available content types in your Strapi instance",
-      "code": "use_mcp_tool(\n  server_name: \"strapi-mcp\",\n  tool_name: \"list_content_types\",\n  arguments: {}\n)"
+      "title": "Lightweight Article Listing (95% smaller)",
+      "description": "High-performance article listing with minimal fields for fast loading",
+      "code": "get_lightweight_entries('api::articles.articles', '{\"filters\":{\"title\":{\"$containsi\":\"AI\"}},\"pagination\":{\"pageSize\":10}}')"
     },
     {
-      "title": "Get Filtered Entries",
-      "description": "Get entries with filtering, pagination, and sorting",
-      "code": "use_mcp_tool(\n  server_name: \"strapi-mcp\",\n  tool_name: \"get_entries\",\n  arguments: {\n    \"contentType\": \"api::article.article\",\n    \"filters\": {\n      \"title\": {\n        \"$contains\": \"hello\"\n      }\n    },\n    \"pagination\": {\n      \"page\": 1,\n      \"pageSize\": 10\n    },\n    \"sort\": [\"createdAt:desc\"]\n  }\n)"
+      "title": "Fast Author Search",
+      "description": "Efficiently find authors without heavy populate operations",
+      "code": "find_author_by_name('Константин')"
     },
     {
-      "title": "Create Entry",
-      "description": "Create a new entry for a content type",
-      "code": "use_mcp_tool(\n  server_name: \"strapi-mcp\",\n  tool_name: \"create_entry\",\n  arguments: {\n    \"contentType\": \"api::article.article\",\n    \"data\": {\n      \"title\": \"My New Article\",\n      \"content\": \"This is the content of my article.\",\n      \"publishedAt\": \"2023-01-01T00:00:00.000Z\"\n    }\n  }\n)"
+      "title": "Schema Analysis Only",
+      "description": "Get content type structure without content data for optimization",
+      "code": "get_schema_fields('api::articles.articles')"
     },
     {
-      "title": "Upload Media",
-      "description": "Upload a media file to Strapi",
-      "code": "use_mcp_tool(\n  server_name: \"strapi-mcp\",\n  tool_name: \"upload_media\",\n  arguments: {\n    \"fileData\": \"base64-encoded-data-here\",\n    \"fileName\": \"image.jpg\",\n    \"fileType\": \"image/jpeg\"\n  }\n)"
+      "title": "Smart Content Preview",
+      "description": "Preview content with essential fields and built-in search",
+      "code": "get_content_preview('api::articles.articles', { limit: 20, search: 'machine learning' })"
+    },
+    {
+      "title": "Upload Image with Alt Text and Caption",
+      "description": "Upload an image file with proper alt text for SEO and accessibility (absolute path required)",
+      "code": "upload_media_from_path('/home/user/photos/image.jpg', null, { alternativeText: 'Beautiful sunset over mountains', caption: 'Landscape photography from our trip', name: 'sunset-mountains.jpg' })"
+    },
+    {
+      "title": "Upload from URL with Metadata",
+      "description": "Download and upload an image from URL with accessibility metadata",
+      "code": "upload_media_from_url('https://example.com/photo.jpg', null, { alternativeText: 'Product showcase image', caption: 'Main product view' })"
+    },
+    {
+      "title": "Update Media Alt Text",
+      "description": "Update alt text and metadata for existing media files",
+      "code": "update_media_metadata('42', { alternativeText: 'Updated alt text for better SEO', caption: 'New caption for the image' })"
+    },
+    {
+      "title": "Create Blog Post with Cover Image",
+      "description": "Create a complete blog post with uploaded cover image",
+      "code": "create_entry('api::article.article', { title: 'My Post', content: 'Content here', cover: 15 })"
+    },
+    {
+      "title": "List All Articles",
+      "description": "Fetch all articles with pagination and populated relations",
+      "code": "get_entries('api::article.article', '{\"pagination\":{\"page\":1,\"pageSize\":10},\"populate\":[\"author\",\"cover\"]}')"
+    },
+    {
+      "title": "Advanced Content Filtering",
+      "description": "Filter articles by title and publication status",
+      "code": "get_entries('api::article.article', '{\"filters\":{\"title\":{\"$contains\":\"strapi\"},\"publishedAt\":{\"$notNull\":true}}}')"
     }
   ]
 }
