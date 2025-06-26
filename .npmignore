@@ -1,48 +1,47 @@
 # Source files
 src/
-
-# TypeScript config
 tsconfig.json
 
 # Development files
+.env*
+test-*.js
+test-*.sh
+test-*.cjs
+
+# Documentation not needed in package
+docs/
+cursor_strapi.md
+IMPROVEMENTS.md
+strapi-mcp-troubleshooting-guide.md
+
+# Memory bank (development only)
+memory-bank/
+
+# Build artifacts that shouldn't be published
+node_modules/
+*.log
+
+# Git files
+.git/
+.gitignore
+
+# GitHub workflows
+.github/
+
+# Development scripts
+scripts/test-*
+scripts/debug-*
+
+# Temporary files
+*.tmp
+*.temp
+
+# IDE files
 .vscode/
 .idea/
-.git/
-.github/
-.gitignore
-.npmignore
+*.swp
+*.swo
 
-# Test files
-test/
-tests/
-*.test.ts
-*.spec.ts
-
-# Logs
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Dependency directories
-node_modules/
-
-# Optional npm cache directory
-.npm
-
-# Optional eslint cache
-.eslintcache
-
-# Output of 'npm pack'
-*.tgz
-
-# dotenv environment variable files
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Documentation files (except README.md)
-docs/
+# OS files
+.DS_Store
+Thumbs.db
