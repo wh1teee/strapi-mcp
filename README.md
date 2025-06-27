@@ -41,14 +41,14 @@ This MCP server integrates with any Strapi CMS instance to provide:
 
 #### Install from npm (Recommended)
 ```bash
-npm install strapi-mcp
+npm install @wh1teee/@wh1teee/strapi-mcp
 ```
 
 #### Install from source (Development)
 For the latest development features:
 ```bash
-git clone https://github.com/l33tdawg/strapi-mcp.git
-cd strapi-mcp
+git clone https://github.com/l33tdawg/@wh1teee/strapi-mcp.git
+cd @wh1teee/strapi-mcp
 npm install
 npm run build
 ```
@@ -57,12 +57,12 @@ npm run build
  
 **Recommended Method (using Cursor MCP Configuration):**
 
-For Cursor users, configure the strapi-mcp server in your `~/.cursor/mcp.json` file:
+For Cursor users, configure the @wh1teee/strapi-mcp server in your `~/.cursor/mcp.json` file:
 
 ```json
-"strapi-mcp": {
+"@wh1teee/strapi-mcp": {
   "command": "npx",
-  "args": ["strapi-mcp"], 
+  "args": ["@wh1teee/strapi-mcp"], 
   "env": {
     "STRAPI_URL": "http://localhost:1337",
     "STRAPI_ADMIN_EMAIL": "your_admin_email@example.com",
@@ -73,9 +73,9 @@ For Cursor users, configure the strapi-mcp server in your `~/.cursor/mcp.json` f
 
 If you installed from source, use the direct path instead:
 ```json
-"strapi-mcp": {
+"@wh1teee/strapi-mcp": {
   "command": "node",
-  "args": ["/path/to/strapi-mcp/build/index.js"], 
+  "args": ["/path/to/@wh1teee/strapi-mcp/build/index.js"], 
   "env": {
     "STRAPI_URL": "http://localhost:1337",
     "STRAPI_ADMIN_EMAIL": "your_admin_email@example.com",
@@ -84,7 +84,7 @@ If you installed from source, use the direct path instead:
 }
 ```
 
-Cursor will manage the server lifecycle automatically when strapi-mcp tools are used.
+Cursor will manage the server lifecycle automatically when @wh1teee/strapi-mcp tools are used.
 
 **Alternative Method (using `.env` file):**
  
@@ -104,7 +104,7 @@ export STRAPI_ADMIN_PASSWORD=your_admin_password
 export STRAPI_DEV_MODE=true # optional
  
 # Run the globally installed package (if installed via npm install -g)
-strapi-mcp 
+@wh1teee/strapi-mcp 
 # Or run the local build directly
 node build/index.js
 ```
@@ -216,7 +216,7 @@ See [Article Creation Guide](docs/article-creation-guide.md) for complete exampl
 
 MIT
 
-# strapi-mcp MCP Server
+# @wh1teee/strapi-mcp MCP Server
 
 An MCP server for your Strapi CMS
 
@@ -403,9 +403,9 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
 ```json
 {
   "mcpServers": {
-    "strapi-mcp": {
+    "@wh1teee/strapi-mcp": {
       "command": "npx",
-      "args": ["strapi-mcp"],
+      "args": ["@wh1teee/@wh1teee/strapi-mcp"],
       "env": {
         "STRAPI_URL": "http://localhost:1337",
         "STRAPI_ADMIN_EMAIL": "your_admin_email@example.com",
@@ -420,8 +420,8 @@ If you installed from source, use the direct path:
 ```json
 {
   "mcpServers": {
-    "strapi-mcp": {
-      "command": "/path/to/strapi-mcp/build/index.js",
+    "@wh1teee/strapi-mcp": {
+      "command": "/path/to/@wh1teee/strapi-mcp/build/index.js",
       "env": {
         "STRAPI_URL": "http://localhost:1337",
         "STRAPI_ADMIN_EMAIL": "your_admin_email@example.com",
@@ -523,7 +523,7 @@ Once the MCP server is configured and running, you can use it with Claude to int
 
 ```javascript
 use_mcp_tool(
-  server_name: "strapi-mcp",
+  server_name: "@wh1teee/strapi-mcp",
   tool_name: "get_lightweight_entries",
   arguments: {
     "contentType": "api::articles.articles",
@@ -539,7 +539,7 @@ use_mcp_tool(
 
 ```javascript
 use_mcp_tool(
-  server_name: "strapi-mcp", 
+  server_name: "@wh1teee/strapi-mcp", 
   tool_name: "find_author_by_name",
   arguments: {
     "authorName": "Константин"
@@ -551,7 +551,7 @@ use_mcp_tool(
 
 ```javascript
 use_mcp_tool(
-  server_name: "strapi-mcp",
+  server_name: "@wh1teee/strapi-mcp",
   tool_name: "get_schema_fields", 
   arguments: {
     "contentType": "api::articles.articles"
@@ -563,7 +563,7 @@ use_mcp_tool(
 
 ```javascript
 use_mcp_tool(
-  server_name: "strapi-mcp",
+  server_name: "@wh1teee/strapi-mcp",
   tool_name: "get_content_preview",
   arguments: {
     "contentType": "api::articles.articles",
@@ -579,7 +579,7 @@ use_mcp_tool(
 
 ```
 use_mcp_tool(
-  server_name: "strapi-mcp",
+  server_name: "@wh1teee/strapi-mcp",
   tool_name: "list_content_types",
   arguments: {}
 )
@@ -589,7 +589,7 @@ use_mcp_tool(
 
 ```
 use_mcp_tool(
-  server_name: "strapi-mcp",
+  server_name: "@wh1teee/strapi-mcp",
   tool_name: "get_entries",
   arguments: {
     "contentType": "api::article.article",
@@ -611,7 +611,7 @@ use_mcp_tool(
 
 ```
 use_mcp_tool(
-  server_name: "strapi-mcp",
+  server_name: "@wh1teee/strapi-mcp",
   tool_name: "create_entry",
   arguments: {
     "contentType": "api::article.article",
@@ -628,7 +628,7 @@ use_mcp_tool(
 
 ```
 use_mcp_tool(
-  server_name: "strapi-mcp",
+  server_name: "@wh1teee/strapi-mcp",
   tool_name: "upload_media",
   arguments: {
     "fileData": "base64-encoded-data-here",
@@ -642,7 +642,7 @@ use_mcp_tool(
 
 ```
 use_mcp_tool(
-  server_name: "strapi-mcp",
+  server_name: "@wh1teee/strapi-mcp",
   tool_name: "connect_relation",
   arguments: {
     "contentType": "api::article.article",
@@ -657,7 +657,7 @@ use_mcp_tool(
 
 ```
 use_mcp_tool(
-  server_name: "strapi-mcp",
+  server_name: "@wh1teee/strapi-mcp",
   tool_name: "disconnect_relation",
   arguments: {
     "contentType": "api::article.article",
@@ -672,7 +672,7 @@ use_mcp_tool(
  
  ```
  use_mcp_tool(
-   server_name: "strapi-mcp-local",
+   server_name: "@wh1teee/strapi-mcp-local",
    tool_name: "create_content_type",
    arguments: {
      "displayName": "My New Product",
@@ -695,7 +695,7 @@ use_mcp_tool(
  
  ```
  use_mcp_tool(
-   server_name: "strapi-mcp-local",
+   server_name: "@wh1teee/strapi-mcp-local",
    tool_name: "update_content_type",
    arguments: {
      "contentType": "api::speaker.speaker",

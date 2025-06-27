@@ -1,5 +1,5 @@
 {
-  "name": "strapi-mcp",
+  "name": "@wh1teee/strapi-mcp",
   "displayName": "Strapi MCP Server",
   "description": "High-performance Model Context Protocol server for Strapi CMS. Features 95% smaller API responses, intelligent field selection, fast author lookup, and comprehensive content management with Strapi v5+ compatibility.",
   "iconUrl": "https://raw.githubusercontent.com/wh1teee/strapi-mcp/main/icon.png",

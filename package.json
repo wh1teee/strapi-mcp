@@ -1,5 +1,5 @@
 {
-   "name": "strapi-mcp",
+   "name": "@wh1teee/strapi-mcp",
    "version": "0.3.0",
    "description": "High-performance MCP server for Strapi CMS with 95% smaller API responses, intelligent field selection, and Strapi v5+ compatibility",
    "private": false,
@@ -30,7 +30,8 @@
    "type": "module",
    "main": "build/index.js",
    "bin": {
-      "strapi-mcp": "build/index.js"
+      "strapi-mcp": "build/index.js",
+      "wh1teee-strapi-mcp": "build/index.js"
    },
    "files": [
       "build",

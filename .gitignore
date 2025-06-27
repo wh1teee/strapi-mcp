@@ -2,3 +2,12 @@ node_modules/
 build/
 *.log
 .env*
+memory-bank/
+*/**/test-*.sh
+*/**/test-*.cjs
+*/**/test-*.js
+test-*.sh
+test-*.cjs
+test-*.js
+docs/
+.cursor/
