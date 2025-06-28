@@ -1,6 +1,6 @@
 {
    "name": "@wh1teee/strapi-mcp",
-   "version": "0.3.0",
+   "version": "0.3.1",
    "description": "High-performance MCP server for Strapi CMS with 95% smaller API responses, intelligent field selection, and Strapi v5+ compatibility",
    "private": false,
    "keywords": [
