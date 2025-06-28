@@ -85,11 +85,11 @@ jobs:
 
             ### 📦 Installation
             \`\`\`bash
-            npm install strapi-mcp@${packageJson.version}
+            npm install @wh1teee/strapi-mcp@${packageJson.version}
             \`\`\`
 
             ### 🔗 Links
-            - [NPM Package](https://www.npmjs.com/package/strapi-mcp)
+            - [NPM Package](https://www.npmjs.com/package/@wh1teee/strapi-mcp)
             - [Documentation](https://github.com/${context.repo.owner}/${context.repo.repo}#readme)
             - [Usage Guide](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/CLAUDE.md)
 

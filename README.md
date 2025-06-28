@@ -21,17 +21,13 @@ This MCP server integrates with any Strapi CMS instance to provide:
  It's recommended to use a `.env` file in the project root to store your credentials.
  
  - `STRAPI_URL`: The URL of your Strapi instance (default: `http://localhost:1337`)
- - `STRAPI_ADMIN_EMAIL`: The email address for a Strapi admin user (Recommended for full functionality, especially schema access).
- - `STRAPI_ADMIN_PASSWORD`: The password for the Strapi admin user (Recommended).
- - `STRAPI_API_TOKEN`: (Optional Fallback) An API token. Can be used if admin credentials are not provided, but may have limited permissions.
+ - `STRAPI_API_TOKEN`: Your Strapi API token (Required for authentication).
  - `STRAPI_DEV_MODE`: Set to `"true"` to enable development mode features (defaults to `false`).
  
  **Example `.env` file:**
  ```dotenv
  STRAPI_URL=http://localhost:1337
- STRAPI_ADMIN_EMAIL=your_admin_email@example.com
- STRAPI_ADMIN_PASSWORD=your_admin_password
- # STRAPI_API_TOKEN=your_api_token_here # Optional
+ STRAPI_API_TOKEN=your_api_token_here
  ```
  **Important:** 
  - Add `.env` to your `.gitignore` file to avoid committing credentials
@@ -65,8 +61,7 @@ For Cursor users, configure the @wh1teee/strapi-mcp server in your `~/.cursor/mc
   "args": ["@wh1teee/strapi-mcp"], 
   "env": {
     "STRAPI_URL": "http://localhost:1337",
-    "STRAPI_ADMIN_EMAIL": "your_admin_email@example.com",
-    "STRAPI_ADMIN_PASSWORD": "your_admin_password"
+    "STRAPI_API_TOKEN": "your_api_token_here"
   }
 }
 ```
@@ -78,8 +73,7 @@ If you installed from source, use the direct path instead:
   "args": ["/path/to/@wh1teee/strapi-mcp/build/index.js"], 
   "env": {
     "STRAPI_URL": "http://localhost:1337",
-    "STRAPI_ADMIN_EMAIL": "your_admin_email@example.com",
-    "STRAPI_ADMIN_PASSWORD": "your_admin_password"
+    "STRAPI_API_TOKEN": "your_api_token_here"
   }
 }
 ```
@@ -98,9 +92,7 @@ node --env-file=.env build/index.js
  
 ```bash
 export STRAPI_URL=http://localhost:1337
-export STRAPI_ADMIN_EMAIL=your_admin_email@example.com
-export STRAPI_ADMIN_PASSWORD=your_admin_password
-# export STRAPI_API_TOKEN=your-api-token # Optional fallback
+export STRAPI_API_TOKEN=your_api_token_here
 export STRAPI_DEV_MODE=true # optional
  
 # Run the globally installed package (if installed via npm install -g)
@@ -195,8 +187,8 @@ See [Article Creation Guide](docs/article-creation-guide.md) for complete exampl
  - **Enhanced Admin Authentication:** Better error handling and token management for all API operations
 
  ### 0.1.6
- - **Added `create_content_type` tool:** Allows creating new content types via the Content-Type Builder API (requires admin credentials).
- - **Prioritized Admin Credentials:** Updated logic to prefer admin email/password for fetching content types and schemas, improving reliability.
+ - **Added `create_content_type` tool:** Allows creating new content types via the Content-Type Builder API.
+ - **Enhanced Authentication:** Streamlined authentication logic for better reliability.
  - **Updated Documentation:** Clarified authentication methods and recommended running procedures.
  
  ### 0.1.5
@@ -408,8 +400,7 @@ On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
       "args": ["@wh1teee/@wh1teee/strapi-mcp"],
       "env": {
         "STRAPI_URL": "http://localhost:1337",
-        "STRAPI_ADMIN_EMAIL": "your_admin_email@example.com",
-        "STRAPI_ADMIN_PASSWORD": "your_admin_password"
+        "STRAPI_API_TOKEN": "your_api_token_here"
       }
     }
   }
@@ -424,8 +415,7 @@ If you installed from source, use the direct path:
       "command": "/path/to/@wh1teee/strapi-mcp/build/index.js",
       "env": {
         "STRAPI_URL": "http://localhost:1337",
-        "STRAPI_ADMIN_EMAIL": "your_admin_email@example.com",
-        "STRAPI_ADMIN_PASSWORD": "your_admin_password"
+        "STRAPI_API_TOKEN": "your_api_token_here"
       }
     }
   }
@@ -435,22 +425,14 @@ If you installed from source, use the direct path:
 ### Environment Variables
 
 - `STRAPI_URL` (optional): The URL of your Strapi instance (defaults to http://localhost:1337)
- - `STRAPI_ADMIN_EMAIL` & `STRAPI_ADMIN_PASSWORD` (Recommended): Credentials for a Strapi admin user. Required for full functionality like fetching content type schemas.
- - `STRAPI_API_TOKEN` (Optional Fallback): Your Strapi API token. Can be used if admin credentials are not provided, but functionality might be limited based on token permissions.
+ - `STRAPI_API_TOKEN`: Your Strapi API token (Required for authentication).
  - `STRAPI_DEV_MODE` (optional): Set to "true" to enable development mode features (defaults to false)
  
- ### Authentication Priority
+ ### Authentication
  
- The server prioritizes authentication methods in this order:
- 1. Admin Email & Password (`STRAPI_ADMIN_EMAIL`, `STRAPI_ADMIN_PASSWORD`)
- 2. API Token (`STRAPI_API_TOKEN`)
+ The server uses API token-based authentication for secure access to your Strapi instance.
  
- It's strongly recommended to use Admin Credentials for the best results.
- 
- ### Getting Strapi Credentials
- 
- - **Admin Credentials:** Use the email and password of an existing Super Admin or create a dedicated admin user in your Strapi admin panel (Settings > Administration Panel > Users).
- - **API Token:** (Optional Fallback)
+ ### Getting Your API Token
 
 1. Log in to your Strapi admin panel
 2. Go to Settings > API Tokens
@@ -479,12 +461,11 @@ Cannot connect to Strapi instance: Connection refused. Is Strapi running at http
 
 #### 3. **Authentication Failed**
 ```
-Cannot connect to Strapi instance: Authentication failed. Check your API token or admin credentials.
+Cannot connect to Strapi instance: Authentication failed. Check your API token.
 ```
 **Solution:**
 - Verify your API token has proper permissions (preferably "Full access")
-- Check admin email/password are correct
-- Ensure the admin user exists and is active
+- Ensure the API token is not expired
 
 #### 4. **Fake Content Types** (`api::data.data`, `api::error.error`)
 This issue has been **fixed in v0.1.8**. If you still see these, you may be using an older version.
@@ -499,7 +480,7 @@ As of v0.1.8, the server now clearly distinguishes between:
 Access forbidden. Your API token may lack necessary permissions.
 ```
 **Solution:**
-- Use admin credentials instead of API token for full functionality
+- Ensure your API token has "Full access" permissions
 - If using API token, ensure it has "Full access" permissions
 - Check that the content type allows public access if using limited API token
 
