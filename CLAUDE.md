@@ -26,7 +26,7 @@ The server implements the MCP specification with:
 - **Error Handling** - Extended error codes (ResourceNotFound, AccessDenied)
 
 ### Key Integration Points
-- **Authentication** - Supports both admin credentials and API tokens
+- **Authentication** - API token-based authentication
 - **Performance** - 95% smaller responses with optimized field selection
 - **Media Upload** - Direct file path and URL upload (absolute paths required)
 - **Content Management** - Full CRUD with relations, filtering, pagination
@@ -37,8 +37,7 @@ The server implements the MCP specification with:
 
 Required environment variables:
 - `STRAPI_URL` - Strapi instance URL (default: http://localhost:1337)
-- `STRAPI_ADMIN_EMAIL` + `STRAPI_ADMIN_PASSWORD` - Recommended for full functionality
-- `STRAPI_API_TOKEN` - Fallback authentication method
+- `STRAPI_API_TOKEN` - Required for authentication
 - `STRAPI_DEV_MODE` - Enable development features
 
 ## Testing and Debugging

@@ -105,38 +105,25 @@ interface FileInfo {
 const STRAPI_URL = process.env.STRAPI_URL || "http://localhost:1337";
 const STRAPI_API_TOKEN = process.env.STRAPI_API_TOKEN;
 const STRAPI_DEV_MODE = process.env.STRAPI_DEV_MODE === "true";
-const STRAPI_ADMIN_EMAIL = process.env.STRAPI_ADMIN_EMAIL;
-const STRAPI_ADMIN_PASSWORD = process.env.STRAPI_ADMIN_PASSWORD;
-
+// Admin authentication removed - these are set to undefined to disable admin auth
+const STRAPI_ADMIN_EMAIL = undefined;
+const STRAPI_ADMIN_PASSWORD = undefined;
 // Validate required environment variables
-if (!STRAPI_API_TOKEN && !(STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD)) {
-  console.error("[Error] Missing required authentication. Please provide either STRAPI_API_TOKEN or both STRAPI_ADMIN_EMAIL and STRAPI_ADMIN_PASSWORD environment variables");
+if (!STRAPI_API_TOKEN) {
+  console.error("[Error] Missing required authentication. Please provide STRAPI_API_TOKEN environment variable");
   process.exit(1);
 }
 
-// Only validate API token format if we don't have admin credentials (since admin creds take priority)
-if (!STRAPI_ADMIN_EMAIL || !STRAPI_ADMIN_PASSWORD) {
-  // If no admin credentials, validate that API token is not a placeholder
-  if (STRAPI_API_TOKEN && (STRAPI_API_TOKEN === "strapi_token" || STRAPI_API_TOKEN === "your-api-token-here" || STRAPI_API_TOKEN.includes("placeholder"))) {
-    console.error("[Error] STRAPI_API_TOKEN appears to be a placeholder value. Please provide a real API token from your Strapi admin panel or use admin credentials instead.");
-    process.exit(1);
-  }
+// Validate API token format
+if (STRAPI_API_TOKEN && (STRAPI_API_TOKEN === "strapi_token" || STRAPI_API_TOKEN === "your-api-token-here" || STRAPI_API_TOKEN.includes("placeholder"))) {
+  console.error("[Error] STRAPI_API_TOKEN appears to be a placeholder value. Please provide a real API token from your Strapi admin panel.");
+  process.exit(1);
 }
 
 console.error(`[Setup] Connecting to Strapi at ${STRAPI_URL}`);
 console.error(`[Setup] Development mode: ${STRAPI_DEV_MODE ? "enabled" : "disabled"}`);
 
-// Determine authentication method priority
-if (STRAPI_API_TOKEN && STRAPI_API_TOKEN !== "strapi_token" && !STRAPI_API_TOKEN.includes("placeholder")) {
-  console.error(`[Setup] Authentication: Using API token (priority)`);
-  if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
-    console.error(`[Setup] Admin credentials also available as fallback`);
-  }
-} else if (STRAPI_ADMIN_EMAIL && STRAPI_ADMIN_PASSWORD) {
-  console.error(`[Setup] Authentication: Using admin credentials`);
-} else {
-  console.error(`[Setup] Authentication: ERROR - No valid authentication method available`);
-}
+console.error(`[Setup] Authentication: Using API token`);
 
 // Axios instance for Strapi API
 const strapiClient = axios.create({
@@ -223,139 +210,18 @@ async function loginToStrapiUser(): Promise<boolean> {
  * Log in to the Strapi admin API using provided credentials
  */
 async function loginToStrapiAdmin(): Promise<boolean> {
-  // Use process.env directly here to ensure latest values are used
-  const email = process.env.STRAPI_ADMIN_EMAIL;
-  const password = process.env.STRAPI_ADMIN_PASSWORD;
-
-  if (!email || !password) {
-    console.error("[Auth] No admin credentials found in process.env, skipping admin login");
-    return false;
-  }
-
-  try {
-    // Log the authentication attempt with more detail
-    console.error(`[Auth] Attempting login to Strapi admin at ${STRAPI_URL}/admin/login as ${email}`);
-    console.error(`[Auth] Full URL being used: ${STRAPI_URL}/admin/login`);
-    
-    // Make the request with more detailed logging
-    console.error(`[Auth] Sending POST request with email and password`);
-    const response = await axios.post(`${STRAPI_URL}/admin/login`, { 
-      email, 
-      password 
-    });
-    
-    console.error(`[Auth] Response status: ${response.status}`);
-    console.error(`[Auth] Response headers:`, JSON.stringify(response.headers));
-    
-    // Check if we got back valid data
-    if (response.data && response.data.data && response.data.data.token) {
-      adminJwtToken = response.data.data.token;
-      console.error("[Auth] Successfully logged in to Strapi admin");
-      console.error(`[Auth] Token received (first 20 chars): ${adminJwtToken?.substring(0, 20)}...`);
-      return true;
-    } else {
-      console.error("[Auth] Login response missing token");
-      console.error(`[Auth] Response data:`, JSON.stringify(response.data));
-      return false;
-    }
-  } catch (error) {
-    console.error("[Auth] Failed to log in to Strapi admin:");
-    if (axios.isAxiosError(error)) {
-      console.error(`[Auth] Status: ${error.response?.status}`);
-      console.error(`[Auth] Response data:`, error.response?.data);
-      console.error(`[Auth] Request URL: ${error.config?.url}`);
-      console.error(`[Auth] Request method: ${error.config?.method}`);
-    } else {
-      console.error(error);
-    }
-    return false;
-  }
+  // Admin authentication removed - always return false
+  console.error("[Auth] Admin authentication not supported - using API token only");
+  return false;
 }
 
 /**
  * Make a request to the admin API using the admin JWT token
  */
-async function makeAdminApiRequest(endpoint: string, method: string = 'get', data?: any, params?: Record<string, any>): Promise<any> { // Add params
-  if (!adminJwtToken) {
-    // Try to log in first
-    console.error(`[Admin API] No token available, attempting login...`);
-    const success = await loginToStrapiAdmin();
-    if (!success) {
-      console.error(`[Admin API] Login failed. Cannot authenticate for admin API access.`);
-      throw new Error("Not authenticated for admin API access");
-    }
-    console.error(`[Admin API] Login successful, proceeding with request.`);
-  }
-  
-  const fullUrl = `${STRAPI_URL}${endpoint}`;
-  console.error(`[Admin API] Making ${method.toUpperCase()} request to: ${fullUrl}`);
-  
-  if (data) {
-    console.error(`[Admin API] Request payload: ${JSON.stringify(data, null, 2)}`);
-  }
-  
-  try {
-    console.error(`[Admin API] Sending request with Authorization header using token: ${adminJwtToken?.substring(0, 20)}...`);
-    const response = await axios({
-      method,
-      url: fullUrl,
-      headers: {
-        'Authorization': `Bearer ${adminJwtToken}`,
-        'Content-Type': 'application/json'
-      },
-      data, // Used for POST, PUT, etc.
-      params // Used for GET requests query parameters
-    });
-
-    console.error(`[Admin API] Response status: ${response.status}`);
-    if (response.data) {
-      console.error(`[Admin API] Response received successfully`);
-    }
-    return response.data;
-  } catch (error) {
-    console.error(`[Admin API] Request to ${endpoint} failed:`);
-    
-    if (axios.isAxiosError(error)) {
-      console.error(`[Admin API] Status: ${error.response?.status}`);
-      console.error(`[Admin API] Error data: ${JSON.stringify(error.response?.data)}`);
-      console.error(`[Admin API] Error headers: ${JSON.stringify(error.response?.headers)}`);
-      
-      // Check if it's an auth error (e.g., token expired)
-      if (error.response?.status === 401 && adminJwtToken) {
-        console.error("[Admin API] Admin token might be expired. Attempting re-login...");
-        adminJwtToken = null; // Clear expired token
-        const loginSuccess = await loginToStrapiAdmin();
-        if (loginSuccess) {
-          console.error("[Admin API] Re-login successful. Retrying original request...");
-          // Retry the request once after successful re-login
-          try {
-            const retryResponse = await axios({
-              method,
-              url: fullUrl,
-              headers: {
-                'Authorization': `Bearer ${adminJwtToken}`,
-                'Content-Type': 'application/json'
-              },
-              data,
-              params
-            });
-            console.error(`[Admin API] Retry successful, status: ${retryResponse.status}`);
-            return retryResponse.data;
-          } catch (retryError) {
-            console.error(`[Admin API] Retry failed:`, retryError);
-            throw retryError;
-          }
-        } else {
-          console.error("[Admin API] Re-login failed. Throwing original error.");
-          throw new Error("Admin re-authentication failed after token expiry.");
-        }
-      }
-    } else {
-      console.error(`[Admin API] Non-Axios error:`, error);
-    }
-    // If not a 401 or re-login failed, throw the original error
-    throw error;
-  }
+async function makeAdminApiRequest(endpoint: string, method: string = 'get', data?: any, params?: Record<string, any>): Promise<any> {
+  // Admin API access removed - throw error
+  console.error(`[Admin API] Admin API access not supported - endpoint: ${endpoint}`);
+  throw new Error("Admin API access not supported. Please use API token-based endpoints instead.");
 }
 
 // Cache for content types
